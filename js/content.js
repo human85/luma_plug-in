@@ -11,14 +11,11 @@ class LumaDataScraper {
     this.authValue = null;
     this.cookieHeader = null;
     
-    // Current scraping session
-    this.currentEventId = null;
-    this.currentEventElement = null;
-    this.currentMode = 'auto';
-    this.currentPage = 0;
-    this.totalVisitors = [];
-    this.cursor = null;
+    // Events data
     this.allEvents = [];
+    
+    // 每个事件独立的抓取状态
+    this.eventStates = new Map();
     
     this.init();
   }
@@ -149,6 +146,34 @@ class LumaDataScraper {
       
       return false;
     }
+  }
+
+  // 获取或创建事件的独立状态
+  getEventState(eventId, eventElement = null) {
+    if (!this.eventStates.has(eventId)) {
+      this.eventStates.set(eventId, {
+        eventId: eventId,
+        eventElement: eventElement,
+        mode: 'auto',
+        page: 0,
+        visitors: [],
+        cursor: null,
+        isRunning: false,
+        totalVisitors: []
+      });
+    }
+    
+    // 更新eventElement如果提供了新的
+    if (eventElement) {
+      this.eventStates.get(eventId).eventElement = eventElement;
+    }
+    
+    return this.eventStates.get(eventId);
+  }
+
+  // 清除事件状态
+  clearEventState(eventId) {
+    this.eventStates.delete(eventId);
   }
 
   // Initialize events list UI
@@ -558,7 +583,7 @@ class LumaDataScraper {
 
     if (nextPageBtn) {
       nextPageBtn.addEventListener('click', () => {
-        this.manualNextPage(eventItem);
+        this.manualNextPage(event.api_id, eventItem);
       });
     }
 
@@ -584,13 +609,13 @@ class LumaDataScraper {
       const scrapeBtn = eventElement.querySelector('.scrape-btn');
       const manualControls = eventElement.querySelector('.luma-manual-controls');
       
-      this.currentEventId = eventApiId;
-      this.currentEventElement = eventElement;
-      this.currentMode = mode;
-      this.currentPage = 0;
-      this.totalVisitors = [];
-      this.isRunning = true;
-      this.cursor = null;
+      // 获取事件独立状态
+      const eventState = this.getEventState(eventApiId, eventElement);
+      eventState.mode = mode;
+      eventState.page = 0;
+      eventState.visitors = [];
+      eventState.isRunning = true;
+      eventState.cursor = null;
       
       progressEl.classList.add('active');
       scrapeBtn.disabled = true;
@@ -600,7 +625,7 @@ class LumaDataScraper {
         manualControls.style.display = 'block';
       }
       
-      await this.fetchNextPage();
+      await this.fetchNextPage(eventApiId);
       
     } catch (error) {
       console.error('Event scraping failed:', error);
@@ -627,8 +652,10 @@ class LumaDataScraper {
   }
 
   // Fetch next page of visitor data
-  async fetchNextPage() {
-    if (!this.isRunning) {
+  async fetchNextPage(eventId) {
+    const eventState = this.getEventState(eventId);
+    
+    if (!eventState.isRunning) {
       console.log('❌ 抓取已停止');
       return;
     }
@@ -638,33 +665,33 @@ class LumaDataScraper {
       const cookieSuccess = await this.getCookies();
       if (!cookieSuccess) {
         console.log('❌ 重新获取Cookie失败，停止抓取');
-        this.stopScraping(this.currentEventId, this.currentEventElement);
+        this.stopScraping(eventId, eventState.eventElement);
         return;
       }
       console.log('✅ 重新获取Cookie成功，继续抓取');
     }
     
-    if (!this.currentEventId) {
+    if (!eventId) {
       console.log('❌ 无效的事件ID');
       return;
     }
 
-    const progressText = this.currentEventElement.querySelector('.progress-text');
-    const progressFill = this.currentEventElement.querySelector('.luma-progress-fill');
-    const pageCountEl = this.currentEventElement.querySelector('.page-count');
-    const dataCountEl = this.currentEventElement.querySelector('.data-count');
+    const progressText = eventState.eventElement.querySelector('.progress-text');
+    const progressFill = eventState.eventElement.querySelector('.luma-progress-fill');
+    const pageCountEl = eventState.eventElement.querySelector('.page-count');
+    const dataCountEl = eventState.eventElement.querySelector('.data-count');
     
-    this.currentPage++;
-    progressText.textContent = `抓取第 ${this.currentPage} 页...`;
+    eventState.page++;
+    progressText.textContent = `抓取第 ${eventState.page} 页...`;
     
     try {
       const baseUrl = "https://api2.luma.com/event/get-guest-list";
       const url = new URL(baseUrl);
-      url.searchParams.set("event_api_id", this.currentEventId);
+      url.searchParams.set("event_api_id", eventId);
       url.searchParams.set("pagination_limit", "100");
       
-      if (this.cursor) {
-        url.searchParams.set("pagination_cursor", this.cursor);
+      if (eventState.cursor) {
+        url.searchParams.set("pagination_cursor", eventState.cursor);
       }
 
       const headers = {
@@ -691,7 +718,7 @@ class LumaDataScraper {
       }
 
       const data = await response.json();
-      console.log(`📄 第 ${this.currentPage} 页响应:`, data);
+      console.log(`📄 第 ${eventState.page} 页响应:`, data);
 
       let pageVisitors = [];
       let rawEntries = [];
@@ -714,7 +741,7 @@ class LumaDataScraper {
           
           return {
             api_id: user.api_id,
-            event_api_id: this.currentEventId,
+            event_api_id: eventState.eventId,
             name: user.name,
             username: user.username,
             website: user.website,
@@ -733,40 +760,43 @@ class LumaDataScraper {
         }).filter(v => v !== null);
       }
 
-      this.totalVisitors = [...this.totalVisitors, ...pageVisitors];
+      // 添加去重逻辑，根据api_id去重
+      const existingIds = new Set(eventState.totalVisitors.map(v => v.api_id));
+      const newVisitors = pageVisitors.filter(v => !existingIds.has(v.api_id));
+      eventState.totalVisitors = [...eventState.totalVisitors, ...newVisitors];
       
-      pageCountEl.textContent = this.currentPage;
-      dataCountEl.textContent = this.totalVisitors.length;
-      progressText.textContent = `第 ${this.currentPage} 页完成，共 ${pageVisitors.length} 条新数据`;
-      progressFill.style.width = Math.min((this.currentPage / 10) * 100, 90) + '%';
+      pageCountEl.textContent = eventState.page;
+      dataCountEl.textContent = eventState.totalVisitors.length;
+      progressText.textContent = `第 ${eventState.page} 页完成，共 ${newVisitors.length} 条新数据 (去重后)`;
+      progressFill.style.width = Math.min((eventState.page / 10) * 100, 90) + '%';
 
-      console.log(`✅ 第 ${this.currentPage} 页完成，本页 ${pageVisitors.length} 条，累计 ${this.totalVisitors.length} 条`);
+      console.log(`✅ 第 ${eventState.page} 页完成，本页 ${pageVisitors.length} 条，新增 ${newVisitors.length} 条，累计 ${eventState.totalVisitors.length} 条`);
       
-      this.cursor = data.next_cursor || data.pagination_cursor || data.cursor;
-      const hasMore = !!this.cursor && pageVisitors.length > 0;
+      eventState.cursor = data.next_cursor || data.pagination_cursor || data.cursor;
+      const hasMore = !!eventState.cursor && pageVisitors.length > 0;
 
-      if (hasMore && this.currentMode === 'auto') {
+      if (hasMore && eventState.mode === 'auto') {
         const delay = Math.floor(Math.random() * 3000) + 3000; // 3-6秒随机延迟
         progressText.textContent = `等待 ${Math.ceil(delay/1000)} 秒后继续...`;
         
         setTimeout(() => {
-          this.fetchNextPage();
+          this.fetchNextPage(eventId);
         }, delay);
-      } else if (hasMore && this.currentMode === 'manual') {
-        progressText.textContent = `第 ${this.currentPage} 页完成，点击"下一页"继续`;
-        const nextBtn = this.currentEventElement.querySelector('.next-page-btn');
+      } else if (hasMore && eventState.mode === 'manual') {
+        progressText.textContent = `第 ${eventState.page} 页完成，点击"下一页"继续`;
+        const nextBtn = eventState.eventElement.querySelector('.next-page-btn');
         nextBtn.disabled = false;
         nextBtn.textContent = '下一页';
       } else {
-        await this.completeScraping();
+        await this.completeScraping(eventId);
       }
 
     } catch (error) {
-      console.error(`❌ 第 ${this.currentPage} 页抓取失败:`, error);
-      progressText.textContent = `第 ${this.currentPage} 页失败: ${error.message}`;
+      console.error(`❌ 第 ${eventState.page} 页抓取失败:`, error);
+      progressText.textContent = `第 ${eventState.page} 页失败: ${error.message}`;
       
-      if (this.currentMode === 'manual') {
-        const nextBtn = this.currentEventElement.querySelector('.next-page-btn');
+      if (eventState.mode === 'manual') {
+        const nextBtn = eventState.eventElement.querySelector('.next-page-btn');
         nextBtn.disabled = false;
         nextBtn.textContent = '重试';
       }
@@ -774,19 +804,20 @@ class LumaDataScraper {
   }
 
   // Manual next page
-  async manualNextPage(eventElement) {
+  async manualNextPage(eventApiId, eventElement) {
     const nextBtn = eventElement.querySelector('.next-page-btn');
     nextBtn.disabled = true;
     nextBtn.textContent = '抓取中...';
     
-    await this.fetchNextPage();
+    await this.fetchNextPage(eventApiId);
   }
 
   // Stop scraping
   stopScraping(eventApiId, eventElement) {
     console.log(`⏹️ 停止抓取事件 ${eventApiId}`);
     
-    this.isRunning = false;
+    const eventState = this.getEventState(eventApiId, eventElement);
+    eventState.isRunning = false;
     
     if (!eventElement) {
       console.log('⚠️ eventElement为空，无法更新UI');
@@ -798,7 +829,7 @@ class LumaDataScraper {
     const manualControls = eventElement.querySelector('.luma-manual-controls');
     
     if (progressText) {
-      progressText.textContent = `已停止 (共抓取 ${this.totalVisitors ? this.totalVisitors.length : 0} 条数据)`;
+      progressText.textContent = `已停止 (共抓取 ${eventState.totalVisitors ? eventState.totalVisitors.length : 0} 条数据)`;
     }
     
     if (scrapeBtn) {
@@ -810,29 +841,30 @@ class LumaDataScraper {
       manualControls.style.display = 'none';
     }
     
-    if (this.totalVisitors && this.totalVisitors.length > 0) {
-      this.completeScraping();
+    if (eventState.totalVisitors && eventState.totalVisitors.length > 0) {
+      this.completeScraping(eventApiId);
     }
   }
 
   // Complete scraping
-  async completeScraping() {
-    console.log(`🎉 抓取完成! 共获取 ${this.totalVisitors.length} 条访客数据`);
+  async completeScraping(eventId) {
+    const eventState = this.getEventState(eventId);
+    console.log(`🎉 抓取完成! 共获取 ${eventState.totalVisitors.length} 条访客数据`);
     
-    const progressText = this.currentEventElement.querySelector('.progress-text');
-    const progressFill = this.currentEventElement.querySelector('.luma-progress-fill');
-    const scrapeBtn = this.currentEventElement.querySelector('.scrape-btn');
-    const manualControls = this.currentEventElement.querySelector('.luma-manual-controls');
+    const progressText = eventState.eventElement.querySelector('.progress-text');
+    const progressFill = eventState.eventElement.querySelector('.luma-progress-fill');
+    const scrapeBtn = eventState.eventElement.querySelector('.scrape-btn');
+    const manualControls = eventState.eventElement.querySelector('.luma-manual-controls');
     
-    progressText.textContent = `抓取完成! 共 ${this.totalVisitors.length} 条访客数据`;
+    progressText.textContent = `抓取完成! 共 ${eventState.totalVisitors.length} 条访客数据`;
     progressFill.style.width = '100%';
     scrapeBtn.textContent = '抓取完成';
     scrapeBtn.style.background = '#28a745';
     manualControls.style.display = 'none';
     
-    this.isRunning = false;
+    eventState.isRunning = false;
 
-    if (this.totalVisitors.length > 0) {
+    if (eventState.totalVisitors.length > 0) {
       try {
         if (!this.extensionValid) {
           throw new Error('扩展上下文已失效，无法保存到扩展存储');
@@ -842,25 +874,25 @@ class LumaDataScraper {
           action: 'saveData',
           data: {
             source: 'api',
-            event_api_id: this.currentEventId,
-            data: this.totalVisitors,
+            event_api_id: eventState.eventId,
+            data: eventState.totalVisitors,
             timestamp: Date.now(),
             url: window.location.href,
-            total_visitors: this.totalVisitors.length,
-            pages_scraped: this.currentPage,
-            mode: this.currentMode
+            total_visitors: eventState.totalVisitors.length,
+            pages_scraped: eventState.page,
+            mode: eventState.mode
           }
         });
 
         console.log('✅ 数据已保存到本地存储');
-        this.addExportButton(this.currentEventElement, this.totalVisitors);
+        this.addExportButton(eventState.eventElement, eventState.totalVisitors, eventState.eventId);
         
       } catch (error) {
         console.error('❌ 保存数据失败:', error);
         
         if (error.message.includes('扩展') || error.message.includes('Extension')) {
           progressText.textContent = `抓取完成! 扩展存储失效，请直接导出CSV`;
-          this.addExportButton(this.currentEventElement, this.totalVisitors);
+          this.addExportButton(eventState.eventElement, eventState.totalVisitors, eventState.eventId);
         } else {
           progressText.textContent = `抓取完成但保存失败: ${error.message}`;
         }
@@ -869,7 +901,7 @@ class LumaDataScraper {
   }
 
   // Add export button
-  addExportButton(eventElement, visitors) {
+  addExportButton(eventElement, visitors, eventId) {
     const actionsRow = eventElement.querySelector('.luma-btn-row');
     
     if (actionsRow.querySelector('.export-btn')) {
@@ -883,7 +915,7 @@ class LumaDataScraper {
     exportBtn.style.width = '100%';
     
     exportBtn.addEventListener('click', () => {
-      this.exportToCSV(visitors, this.currentEventId);
+      this.exportToCSV(visitors, eventId);
     });
     
     actionsRow.parentNode.appendChild(exportBtn);
