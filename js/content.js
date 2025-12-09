@@ -130,7 +130,8 @@ class LumaDataScraper {
         this.cookieHeader = response.cookieHeader;
         console.log('Auth cookie loaded:', {
           domain: response.domain,
-          value: this.authValue.substring(0, 20) + '...'
+          authenticated: true,
+          length: this.authValue.length
         });
         return true;
       } else {
@@ -225,7 +226,7 @@ class LumaDataScraper {
       <div class="luma-scraper-header">
         <h3>🎯 Luma数据抓取器</h3>
         <div class="luma-status">
-          ✅ 认证成功 | 找到 ${events.filter(e => e.canScrape).length}/${events.length} 个可抓取活动
+          ✅ 已认证 | 找到 ${events.filter(e => e.canScrape).length}/${events.length} 个可抓取活动
         </div>
       </div>
       <div class="luma-events-list" id="luma-events-list">
@@ -479,10 +480,10 @@ class LumaDataScraper {
         : event.location_type;
 
       const accessStatus = event.canScrape 
-        ? '✅ 访客列表可见 | 🔑 有访问权限'
+        ? '✅ Guest列表可见 | 🔑 有访问权限'
         : event.show_guest_list 
-          ? '✅ 访客列表可见 | ❌ 无访问权限'
-          : '❌ 访客列表不可见';
+          ? '✅ Guest列表可见 | ❌ 无访问权限'
+          : '❌ Guest列表不可见';
 
       eventItem.innerHTML = `
         <div class="luma-event-name">${event.name}</div>
@@ -493,25 +494,26 @@ class LumaDataScraper {
         </div>
         ${event.canScrape ? `
         <div class="luma-event-actions">
-          <div class="luma-scrape-mode">
-            <button class="luma-mode-btn mode-auto active" data-mode="auto">🤖 自动翻页</button>
-            <button class="luma-mode-btn mode-manual" data-mode="manual">👆 手动翻页</button>
-          </div>
           <div class="luma-btn-row">
-            <button class="luma-btn luma-btn-primary scrape-btn" data-event-id="${event.api_id}">
-              开始抓取
+            <button class="luma-btn luma-btn-primary scrape-auto-btn" data-event-id="${event.api_id}" data-mode="auto">
+              🤖 自动抓取
             </button>
+            <button class="luma-btn luma-btn-success scrape-manual-btn" data-event-id="${event.api_id}" data-mode="manual">
+              👆 手动抓取
+            </button>
+          </div>
+          <div class="luma-btn-row" style="margin-top: 8px;">
             <button class="luma-btn luma-btn-warning view-btn" data-event-id="${event.api_id}">
               查看详情
+            </button>
+            <button class="luma-btn luma-btn-danger stop-btn" data-event-id="${event.api_id}" style="display: none;">
+              停止抓取
             </button>
           </div>
           <div class="luma-manual-controls" style="display: none;">
             <div class="luma-btn-row" style="margin-top: 8px;">
               <button class="luma-btn luma-btn-success next-page-btn" data-event-id="${event.api_id}">
                 下一页
-              </button>
-              <button class="luma-btn luma-btn-danger stop-btn" data-event-id="${event.api_id}">
-                停止抓取
               </button>
             </div>
           </div>
@@ -546,47 +548,42 @@ class LumaDataScraper {
 
   // Bind event handlers
   bindEventHandlers(eventItem, event) {
-    const modeButtons = eventItem.querySelectorAll('.luma-mode-btn');
-    const manualControls = eventItem.querySelector('.luma-manual-controls');
-    
-    modeButtons.forEach(btn => {
-      btn.addEventListener('click', () => {
-        modeButtons.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        
-        const mode = btn.dataset.mode;
-        if (mode === 'manual') {
-          manualControls.style.display = 'block';
-        } else {
-          manualControls.style.display = 'none';
-        }
-      });
-    });
-
-    const scrapeBtn = eventItem.querySelector('.scrape-btn');
+    const scrapeAutoBtn = eventItem.querySelector('.scrape-auto-btn');
+    const scrapeManualBtn = eventItem.querySelector('.scrape-manual-btn');
     const viewBtn = eventItem.querySelector('.view-btn');
     const nextPageBtn = eventItem.querySelector('.next-page-btn');
     const stopBtn = eventItem.querySelector('.stop-btn');
+    const manualControls = eventItem.querySelector('.luma-manual-controls');
 
-    if (scrapeBtn) {
-      scrapeBtn.addEventListener('click', () => {
-        const mode = eventItem.querySelector('.luma-mode-btn.active').dataset.mode;
-        this.startEventScraping(event.api_id, eventItem, mode);
+    // 自动抓取按钮
+    if (scrapeAutoBtn) {
+      scrapeAutoBtn.addEventListener('click', () => {
+        this.startEventScraping(event.api_id, eventItem, 'auto');
       });
     }
 
+    // 手动抓取按钮
+    if (scrapeManualBtn) {
+      scrapeManualBtn.addEventListener('click', () => {
+        this.startEventScraping(event.api_id, eventItem, 'manual');
+      });
+    }
+
+    // 查看详情按钮
     if (viewBtn) {
       viewBtn.addEventListener('click', () => {
         this.showEventDetails(event);
       });
     }
 
+    // 下一页按钮
     if (nextPageBtn) {
       nextPageBtn.addEventListener('click', () => {
         this.manualNextPage(event.api_id, eventItem);
       });
     }
 
+    // 停止抓取按钮
     if (stopBtn) {
       stopBtn.addEventListener('click', () => {
         this.stopScraping(event.api_id, eventItem);
@@ -606,7 +603,9 @@ class LumaDataScraper {
       await this.safeChromeMessage({ action: 'getCookies' });
       
       const progressEl = eventElement.querySelector('.luma-progress');
-      const scrapeBtn = eventElement.querySelector('.scrape-btn');
+      const scrapeAutoBtn = eventElement.querySelector('.scrape-auto-btn');
+      const scrapeManualBtn = eventElement.querySelector('.scrape-manual-btn');
+      const stopBtn = eventElement.querySelector('.stop-btn');
       const manualControls = eventElement.querySelector('.luma-manual-controls');
       
       // 获取事件独立状态
@@ -618,8 +617,18 @@ class LumaDataScraper {
       eventState.cursor = null;
       
       progressEl.classList.add('active');
-      scrapeBtn.disabled = true;
-      scrapeBtn.textContent = '抓取中...';
+      
+      // 禁用抓取按钮，显示停止按钮
+      if (scrapeAutoBtn) {
+        scrapeAutoBtn.disabled = true;
+        scrapeAutoBtn.textContent = mode === 'auto' ? '🤖 抓取中...' : '🤖 自动抓取';
+      }
+      if (scrapeManualBtn) {
+        scrapeManualBtn.disabled = true;
+        scrapeManualBtn.textContent = mode === 'manual' ? '👆 抓取中...' : '👆 手动抓取';
+      }
+      
+      stopBtn.style.display = 'inline-block';
       
       if (mode === 'manual') {
         manualControls.style.display = 'block';
@@ -631,16 +640,27 @@ class LumaDataScraper {
       console.error('Event scraping failed:', error);
       
       const progressText = eventElement.querySelector('.progress-text');
-      const scrapeBtn = eventElement.querySelector('.scrape-btn');
+      const scrapeAutoBtn = eventElement.querySelector('.scrape-auto-btn');
+      const scrapeManualBtn = eventElement.querySelector('.scrape-manual-btn');
+      const stopBtn = eventElement.querySelector('.stop-btn');
       
       if (progressText) {
         progressText.textContent = `抓取失败: ${error.message}`;
       }
       
-      if (scrapeBtn) {
-        scrapeBtn.textContent = '抓取失败';
-        scrapeBtn.disabled = false;
-        scrapeBtn.style.background = '#dc3545';
+      // 重置按钮状态
+      if (scrapeAutoBtn) {
+        scrapeAutoBtn.textContent = '🤖 自动抓取';
+        scrapeAutoBtn.disabled = false;
+        scrapeAutoBtn.style.background = '#dc3545';
+      }
+      if (scrapeManualBtn) {
+        scrapeManualBtn.textContent = '👆 手动抓取';
+        scrapeManualBtn.disabled = false;
+        scrapeManualBtn.style.background = '#dc3545';
+      }
+      if (stopBtn) {
+        stopBtn.style.display = 'none';
       }
       
       this.isRunning = false;
@@ -825,16 +845,28 @@ class LumaDataScraper {
     }
     
     const progressText = eventElement.querySelector('.progress-text');
-    const scrapeBtn = eventElement.querySelector('.scrape-btn');
+    const scrapeAutoBtn = eventElement.querySelector('.scrape-auto-btn');
+    const scrapeManualBtn = eventElement.querySelector('.scrape-manual-btn');
+    const stopBtn = eventElement.querySelector('.stop-btn');
     const manualControls = eventElement.querySelector('.luma-manual-controls');
     
     if (progressText) {
       progressText.textContent = `已停止 (共抓取 ${eventState.totalVisitors ? eventState.totalVisitors.length : 0} 条数据)`;
     }
     
-    if (scrapeBtn) {
-      scrapeBtn.textContent = '已停止';
-      scrapeBtn.disabled = true;
+    // 重置按钮状态
+    if (scrapeAutoBtn) {
+      scrapeAutoBtn.textContent = '🤖 自动抓取';
+      scrapeAutoBtn.disabled = false;
+      scrapeAutoBtn.style.background = '';
+    }
+    if (scrapeManualBtn) {
+      scrapeManualBtn.textContent = '👆 手动抓取';
+      scrapeManualBtn.disabled = false;
+      scrapeManualBtn.style.background = '';
+    }
+    if (stopBtn) {
+      stopBtn.style.display = 'none';
     }
     
     if (manualControls) {
@@ -849,17 +881,32 @@ class LumaDataScraper {
   // Complete scraping
   async completeScraping(eventId) {
     const eventState = this.getEventState(eventId);
-    console.log(`🎉 抓取完成! 共获取 ${eventState.totalVisitors.length} 条访客数据`);
+    console.log(`🎉 抓取完成! 共获取 ${eventState.totalVisitors.length} 条guest数据`);
     
     const progressText = eventState.eventElement.querySelector('.progress-text');
     const progressFill = eventState.eventElement.querySelector('.luma-progress-fill');
-    const scrapeBtn = eventState.eventElement.querySelector('.scrape-btn');
+    const scrapeAutoBtn = eventState.eventElement.querySelector('.scrape-auto-btn');
+    const scrapeManualBtn = eventState.eventElement.querySelector('.scrape-manual-btn');
+    const stopBtn = eventState.eventElement.querySelector('.stop-btn');
     const manualControls = eventState.eventElement.querySelector('.luma-manual-controls');
     
-    progressText.textContent = `抓取完成! 共 ${eventState.totalVisitors.length} 条访客数据`;
+    progressText.textContent = `抓取完成! 共 ${eventState.totalVisitors.length} 条guest数据`;
     progressFill.style.width = '100%';
-    scrapeBtn.textContent = '抓取完成';
-    scrapeBtn.style.background = '#28a745';
+    
+    // 更新按钮状态
+    if (scrapeAutoBtn) {
+      scrapeAutoBtn.textContent = '✅ 抓取完成';
+      scrapeAutoBtn.style.background = '#28a745';
+      scrapeAutoBtn.disabled = true;
+    }
+    if (scrapeManualBtn) {
+      scrapeManualBtn.textContent = '✅ 抓取完成';
+      scrapeManualBtn.style.background = '#28a745';
+      scrapeManualBtn.disabled = true;
+    }
+    if (stopBtn) {
+      stopBtn.style.display = 'none';
+    }
     manualControls.style.display = 'none';
     
     eventState.isRunning = false;
@@ -922,10 +969,16 @@ class LumaDataScraper {
   }
 
   // Export to CSV
-  exportToCSV(visitors, eventId) {
+  exportToCSV(visitors, eventId, eventName = null) {
     if (!visitors || visitors.length === 0) {
       alert('没有数据可导出');
       return;
+    }
+
+    // 如果没有提供事件名称，尝试从 allEvents 中查找
+    if (!eventName && this.allEvents) {
+      const event = this.allEvents.find(e => e.api_id === eventId);
+      eventName = event ? event.name : null;
     }
 
     const headers = [
@@ -951,11 +1004,26 @@ class LumaDataScraper {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `luma_visitors_${eventId}_${new Date().toISOString().split('T')[0]}.csv`;
+    
+    // 生成文件名
+    const now = new Date();
+    const dateTime = now.getFullYear() + 
+      String(now.getMonth() + 1).padStart(2, '0') + 
+      String(now.getDate()).padStart(2, '0') + '_' +
+      String(now.getHours()).padStart(2, '0') + 
+      String(now.getMinutes()).padStart(2, '0') + 
+      String(now.getSeconds()).padStart(2, '0');
+    
+    // 清理会议名称，移除不适合文件名的字符
+    const cleanEventName = eventName 
+      ? eventName.replace(/[<>:"/\\|?*]/g, '_').substring(0, 50)
+      : 'luma_event';
+    
+    a.download = `${cleanEventName}_guest_${dateTime}.csv`;
     a.click();
     URL.revokeObjectURL(url);
     
-    console.log(`📁 CSV文件已下载: ${visitors.length} 条访客数据`);
+    console.log(`📁 CSV文件已下载: ${visitors.length} 条guest数据, 文件名: ${a.download}`);
   }
 
   // Create fallback UI
@@ -965,7 +1033,195 @@ class LumaDataScraper {
 
   // Show event details
   showEventDetails(event) {
-    alert(`事件详情:\n\n名称: ${event.name}\n时间: ${new Date(event.start_at).toLocaleString()}\n链接: https://lu.ma/${event.url}`);
+    // 移除已存在的详情弹窗
+    const existingModal = document.querySelector('#luma-event-detail-modal');
+    if (existingModal) {
+      existingModal.remove();
+    }
+
+    // 创建详情弹窗
+    const modal = document.createElement('div');
+    modal.id = 'luma-event-detail-modal';
+    modal.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0,0,0,0.8);
+      z-index: 10002;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      box-sizing: border-box;
+    `;
+
+    const modalContent = document.createElement('div');
+    modalContent.style.cssText = `
+      background: white;
+      border-radius: 12px;
+      max-width: 600px;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    `;
+
+    const startDate = new Date(event.start_at);
+    const endDate = event.end_at ? new Date(event.end_at) : null;
+    const location = event.location_type === 'offline' 
+      ? (event.geo_address_info?.address || event.geo_address_info?.city || '线下活动')
+      : event.location_type;
+    
+    const accessStatus = event.canScrape 
+      ? '✅ Guest列表可见 | 🔑 有访问权限'
+      : event.show_guest_list 
+        ? '✅ Guest列表可见 | ❌ 无访问权限'
+        : '❌ Guest列表不可见';
+
+    modalContent.innerHTML = `
+      <div style="position: relative;">
+        ${event.cover_url ? `
+          <img src="${event.cover_url}" alt="活动封面" style="
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            border-radius: 12px 12px 0 0;
+          "/>
+        ` : `
+          <div style="
+            width: 100%;
+            height: 200px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px 12px 0 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+          ">
+            🎯 ${event.name}
+          </div>
+        `}
+        
+        <button onclick="this.closest('#luma-event-detail-modal').remove()" style="
+          position: absolute;
+          top: 12px;
+          right: 12px;
+          width: 32px;
+          height: 32px;
+          border-radius: 50%;
+          background: rgba(0,0,0,0.6);
+          border: none;
+          color: white;
+          font-size: 18px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: background 0.2s;
+        " onmouseover="this.style.background='rgba(0,0,0,0.8)'" onmouseout="this.style.background='rgba(0,0,0,0.6)'">×</button>
+      </div>
+      
+      <div style="padding: 24px;">
+        <h2 style="margin: 0 0 16px 0; font-size: 20px; color: #2d3436;">${event.name}</h2>
+        
+        <div style="display: flex; flex-direction: column; gap: 12px; font-size: 14px; color: #636e72;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 16px;">📅</span>
+            <div>
+              <div><strong>开始时间:</strong> ${startDate.toLocaleString()}</div>
+              ${endDate ? `<div><strong>结束时间:</strong> ${endDate.toLocaleString()}</div>` : ''}
+            </div>
+          </div>
+          
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 16px;">📍</span>
+            <div><strong>地点:</strong> ${location}</div>
+          </div>
+          
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 16px;">🎫</span>
+            <div><strong>可见性:</strong> ${event.visibility}</div>
+          </div>
+          
+          <div style="display: flex; align-items: flex-start; gap: 8px;">
+            <span style="font-size: 16px;">🔐</span>
+            <div><strong>抓取状态:</strong> ${accessStatus}</div>
+          </div>
+          
+          ${event.description ? `
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+              <span style="font-size: 16px;">📝</span>
+              <div>
+                <div><strong>描述:</strong></div>
+                <div style="margin-top: 4px; line-height: 1.5; max-height: 120px; overflow-y: auto; padding: 8px; background: #f8f9fa; border-radius: 4px;">
+                  ${event.description.replace(/\n/g, '<br>')}
+                </div>
+              </div>
+            </div>
+          ` : ''}
+          
+          ${event.guest_count ? `
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 16px;">👥</span>
+              <div><strong>参与人数:</strong> ${event.guest_count} 人</div>
+            </div>
+          ` : ''}
+        </div>
+        
+        <div style="display: flex; gap: 12px; margin-top: 24px;">
+          <a href="https://lu.ma/${event.url}" target="_blank" style="
+            flex: 1;
+            padding: 12px 16px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            text-align: center;
+            font-weight: 500;
+            transition: background 0.2s;
+          " onmouseover="this.style.background='#5a6fd8'" onmouseout="this.style.background='#667eea'">
+            🔗 查看原页面
+          </a>
+          
+          <button onclick="this.closest('#luma-event-detail-modal').remove()" style="
+            flex: 1;
+            padding: 12px 16px;
+            background: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+          " onmouseover="this.style.background='#5a6268'" onmouseout="this.style.background='#6c757d'">
+            关闭
+          </button>
+        </div>
+      </div>
+    `;
+
+    modal.appendChild(modalContent);
+    document.body.appendChild(modal);
+
+    // 点击模态框背景关闭
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        modal.remove();
+      }
+    });
+
+    // ESC键关闭
+    const escHandler = (e) => {
+      if (e.key === 'Escape') {
+        modal.remove();
+        document.removeEventListener('keydown', escHandler);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
   }
 
   // Get user events from API
