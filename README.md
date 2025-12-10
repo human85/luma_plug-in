@@ -1,4 +1,4 @@
-# Luma Data Scraper 浏览器插件
+# EventMate 浏览器插件
 
 一个帮助用户从Luma网站抓取数据并实现自动翻页功能的Chrome浏览器插件。
 

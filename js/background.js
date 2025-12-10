@@ -1,19 +1,19 @@
-// Luma Data Scraper Background Script
+// EventMate Background Script
 
 // const LUMA_DOMAINS = ['luma.com'];
 
-// 安装事件
+// Installation event
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('Luma Data Scraper installed');
+  console.log('EventMate installed');
 });
 
-// 获取 luma.auth-session-key cookie
+// Get luma.auth-session-key cookie
 async function getLumaAuthCookie() {
   const domains = ['luma.com', '.luma.com', 'lu.ma', '.lu.ma'];
 
   for (const domain of domains) {
     try {
-      // 直接获取指定名称的cookie
+      // Directly get cookie with specified name
       const cookie = await chrome.cookies.get({
         url: `https://${domain}`,
         name: 'luma.auth-session-key'
@@ -38,13 +38,13 @@ async function getLumaAuthCookie() {
   };
 }
 
-// 将cookies转换为请求头格式
+// Convert cookies to request header format
 function cookiesToHeader(cookies) {
   return cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
 }
 
-// 监听来自content script和popup的消息
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+// Listen for messages from content script and popup
+chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.action === 'getCookies') {
     getLumaAuthCookie().then(result => {
       if (result.found) {
@@ -67,11 +67,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         error: error.message
       });
     });
-    return true; // 保持消息通道开放
+    return true; // Keep message channel open
   }
 
   if (request.action === 'saveData') {
-    // 保存抓取的数据到storage
+    // Save scraped data to storage
     chrome.storage.local.set({
       [`scraped_data_${Date.now()}`]: request.data
     }).then(() => {
@@ -83,7 +83,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'getData') {
-    // 获取所有保存的数据
+    // Get all saved data
     chrome.storage.local.get(null).then(data => {
       const scrapedData = {};
       Object.keys(data).forEach(key => {
@@ -99,13 +99,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// 辅助函数：验证auth cookie是否有效
+// Helper function: validate if auth cookie is valid
 function validateAuthCookie(cookie) {
   if (!cookie || !cookie.value) {
     return false;
   }
 
-  // 检查是否过期
+  // Check if expired
   if (cookie.expirationDate && cookie.expirationDate < Date.now() / 1000) {
     return false;
   }
@@ -113,10 +113,10 @@ function validateAuthCookie(cookie) {
   return true;
 }
 
-// 处理网络请求（如果需要代理请求的话）
+// Handle network requests (if proxy requests are needed)
 chrome.webRequest?.onBeforeSendHeaders?.addListener(
   function (details) {
-    // 可以在这里修改请求头，添加cookies等
+    // Can modify request headers here, add cookies, etc.
     if (details.url.includes('luma.ai') || details.url.includes('lu.ma')) {
       console.log('Luma request intercepted:', details.url);
     }

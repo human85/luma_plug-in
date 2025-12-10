@@ -1,22 +1,176 @@
-// Luma Data Scraper Content Script - Clean Version
+// EventMate Content Script - Clean Version
+
+// Language configuration
+const CONTENT_LANGUAGES = {
+  en: {
+    title: 'EventMate',
+    status: {
+      authenticated: 'Authenticated',
+      found: 'Found',
+      scrappable: 'scrappable events',
+      cookieAuthorized: 'Cookie permission authorized, can be modified anytime'
+    },
+    events: {
+      guestListVisible: 'Guest list visible',
+      hasAccess: 'Has access',
+      noAccess: 'No access',
+      guestListHidden: 'Guest list hidden',
+      startTime: 'Start',
+      location: 'Location',
+      offline: 'Offline event',
+      startTimeLabel: 'Start Time:',
+      endTimeLabel: 'End Time:',
+      scrapeStatusLabel: 'Scrape Status:',
+      guestCountLabel: 'Participants:',
+      locationLabel: 'Location:',
+      visibilityLabel: 'Visibility:',
+      description: 'Description',
+      viewOriginal: 'View Original Page',
+      close: 'Close'
+    },
+    buttons: {
+      autoScrape: 'Auto Scrape',
+      manualScrape: 'Manual Scrape',
+      scraping: 'Scraping...',
+      stop: 'Stop',
+      nextPage: 'Next Page',
+      retry: 'Retry',
+      export: 'Export CSV',
+      reset: 'Reset Status',
+      completed: 'Completed',
+      viewDetails: 'View Details'
+    },
+    messages: {
+      noScrapableEvents: 'No scrappable events',
+      noDataToExport: 'No data to export',
+      page: 'Page',
+      completed: 'completed',
+      newData: 'new data',
+      deduped: '(after deduplication)',
+      total: 'total',
+      waiting: 'Waiting',
+      seconds: 'seconds to continue',
+      stopped: 'Stopped',
+      waitingSeconds: 'Waiting',
+      secondsAndContinue: 'seconds to continue...',
+      scraped: 'scraped',
+      items: 'items',
+      failed: 'failed',
+      refreshPage: 'Please refresh the page manually',
+      extensionReload: 'Extension needs reload',
+      extensionUpdated: 'Extension updated, page reload required',
+      ready: 'Ready...',
+      extensionStorageInvalid: 'Extension storage invalid, please export CSV directly',
+      possibleReasons: 'Possible reasons:',
+      networkIssue: 'Network connection issue',
+      apiUnavailable: 'API temporarily unavailable',
+      authAbnormal: 'Authentication status abnormal'
+    }
+  },
+  cn: {
+    title: 'EventMate',
+    status: {
+      authenticated: '已认证',
+      found: '找到',
+      scrappable: '个可抓取活动',
+      cookieAuthorized: 'Cookie权限已授权，可随时修改'
+    },
+    events: {
+      guestListVisible: 'Guest列表可见',
+      hasAccess: '有访问权限',
+      noAccess: '无访问权限',
+      guestListHidden: 'Guest列表不可见',
+      startTime: '时间',
+      location: '地点',
+      offline: '线下活动',
+      startTimeLabel: '开始时间:',
+      endTimeLabel: '结束时间:',
+      scrapeStatusLabel: '抓取状态:',
+      guestCountLabel: '参与人数:',
+      locationLabel: '地点:',
+      visibilityLabel: '可见性:',
+      description: '描述',
+      viewOriginal: '查看原页面',
+      close: '关闭'
+    },
+    buttons: {
+      autoScrape: '🤖 自动抓取',
+      manualScrape: '👆 手动抓取',
+      scraping: '抓取中...',
+      stop: '停止',
+      nextPage: '下一页',
+      retry: '重试',
+      export: '导出 CSV',
+      reset: '🔄 重置状态',
+      completed: '✅ 抓取完成',
+      viewDetails: '查看详情'
+    },
+    messages: {
+      noScrapableEvents: '暂无可抓取的活动',
+      noDataToExport: '没有数据可导出',
+      page: '页',
+      completed: '完成',
+      newData: '条新数据',
+      deduped: '(去重后)',
+      total: '累计',
+      waiting: '等待',
+      seconds: '秒后继续',
+      stopped: '已停止',
+      waitingSeconds: '等待',
+      secondsAndContinue: '秒后继续...',
+      scraped: '共抓取',
+      items: '条数据',
+      failed: '失败',
+      refreshPage: '请手动刷新页面重试',
+      extensionReload: '插件需要重新加载',
+      extensionUpdated: '扩展已更新，需要重新加载页面',
+      ready: '准备中...',
+      extensionStorageInvalid: '扩展存储失效，请直接导出CSV',
+      possibleReasons: '可能的原因：',
+      networkIssue: '网络连接问题',
+      apiUnavailable: 'API临时不可用',
+      authAbnormal: '认证状态异常'
+    }
+  }
+};
+
+// Content language manager
+const ContentLanguageManager = {
+  getCurrentLang() {
+    return localStorage.getItem('luma-scraper-lang') || 'en';
+  },
+
+  getText(path, lang = null) {
+    lang = lang || this.getCurrentLang();
+    const keys = path.split('.');
+    let text = CONTENT_LANGUAGES[lang];
+    
+    for (const key of keys) {
+      text = text?.[key];
+    }
+    
+    return text || path;
+  }
+};
 
 class LumaDataScraper {
   constructor() {
     this.isRunning = false;
     this.initComplete = false;
     this.extensionValid = true;
-    
+
     // Authentication
     this.authCookie = null;
     this.authValue = null;
     this.cookieHeader = null;
-    
+    this.cookieConsent = false; // Cookie consent status
+
     // Events data
     this.allEvents = [];
-    
-    // 每个事件独立的抓取状态
+
+    // Independent scraping status for each event
     this.eventStates = new Map();
-    
+
     this.init();
   }
 
@@ -24,21 +178,21 @@ class LumaDataScraper {
   async safeChromeMessage(message) {
     try {
       if (!chrome?.runtime?.sendMessage) {
-        throw new Error('Chrome扩展API不可用');
+        throw new Error('Chrome Extension API unavailable');
       }
-      
+
       if (!chrome.runtime.id) {
-        throw new Error('扩展上下文已失效');
+        throw new Error('Extension context invalidated');
       }
-      
+
       return await chrome.runtime.sendMessage(message);
     } catch (error) {
-      if (error.message.includes('Extension context invalidated') || 
-          error.message.includes('扩展上下文已失效')) {
-        console.log('🔄 扩展上下文失效，尝试重新初始化...');
+      if (error.message.includes('Extension context invalidated') ||
+        error.message.includes('Extension context invalidated')) {
+        console.log('🔄 Extension context invalidated, attempting re-initialization...');
         this.extensionValid = false;
         this.showExtensionError();
-        throw new Error('扩展已重新加载，请刷新页面');
+        throw new Error('Extension has been reloaded');
       }
       throw error;
     }
@@ -48,7 +202,7 @@ class LumaDataScraper {
   showExtensionError() {
     const existingError = document.querySelector('#luma-extension-error');
     if (existingError) return;
-    
+
     const errorDiv = document.createElement('div');
     errorDiv.id = 'luma-extension-error';
     errorDiv.style.cssText = `
@@ -67,23 +221,14 @@ class LumaDataScraper {
       max-width: 400px;
       text-align: center;
     `;
-    
+
     errorDiv.innerHTML = `
-      <div style="margin-bottom: 10px;"><strong>🔄 插件需要重新加载</strong></div>
-      <div style="margin-bottom: 10px;">扩展已更新，请刷新页面以继续使用</div>
-      <button onclick="window.location.reload()" style="
-        background: white;
-        color: #ff4757;
-        border: none;
-        padding: 8px 16px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-weight: bold;
-      ">刷新页面</button>
+      <div style="margin-bottom: 10px;"><strong>🔄 ${ContentLanguageManager.getText('messages.extensionReload')}</strong></div>
+      <div style="margin-bottom: 10px;">${ContentLanguageManager.getText('messages.extensionUpdated')}</div>
     `;
-    
+
     document.body.appendChild(errorDiv);
-    
+
     setTimeout(() => {
       if (errorDiv.parentNode) {
         errorDiv.parentNode.removeChild(errorDiv);
@@ -93,36 +238,130 @@ class LumaDataScraper {
 
   // Initialize the scraper
   async init() {
-    console.log('🎯 Luma Data Scraper initialized on:', window.location.href);
-    
-    try {
-      const cookieSuccess = await this.getCookies();
-      console.log('Cookie获取结果:', cookieSuccess);
-      
-      await this.initEventsList();
-      
-      window.lumaDataScraper = this;
-      this.initComplete = true;
-      console.log('✅ Luma插件初始化完成');
-      
-    } catch (error) {
-      console.error('❌ Luma插件初始化失败:', error);
-      this.initComplete = false;
+    console.log('🎯 EventMate initialized on:', window.location.href);
+
+    // 🔒 Security first: Only based on user's explicit consent status, no automatic Cookie detection
+    const savedConsent = await this.getCookieConsentFromStorage();
+
+    if (savedConsent === true) {
+      // User has explicitly agreed before, continue initialization
+      this.cookieConsent = true;
+      console.log('✅ Detected user\'s previous explicit consent');
+      await this.continueInit();
+    } else if (savedConsent === false) {
+      // User has explicitly denied before
+      this.cookieConsent = false;
+      console.log('⚠️ User previously denied Cookie usage, not showing interface');
+    } else {
+      // First visit, Cookie consent now handled by popup
+      console.log('❓ First visit, need user consent in plugin popup');
+      // Don't show Cookie consent interface here, handled by popup
     }
-    
+
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       this.handleMessage(request, sender, sendResponse);
       return true;
     });
   }
 
+  // Continue initialization after cookie consent
+  async continueInit() {
+    try {
+      const cookieSuccess = await this.getCookies();
+      console.log('Cookie retrieval result:', cookieSuccess);
+
+      await this.initEventsList();
+
+      window.lumaDataScraper = this;
+      this.initComplete = true;
+      console.log('✅ Luma plugin initialization completed');
+
+    } catch (error) {
+      console.error('❌ Luma plugin initialization failed:', error);
+      this.initComplete = false;
+    }
+  }
+
+  // Get cookie consent from chrome storage (now async)
+  async getCookieConsentFromStorage() {
+    try {
+      const result = await chrome.storage.local.get(['cookieConsent']);
+      if (result.cookieConsent === 'granted') return true;
+      if (result.cookieConsent === 'denied') return false;
+      return null; // Status not set
+    } catch (error) {
+      console.log('Cannot read Cookie consent status:', error);
+      return null;
+    }
+  }
+
+  // Check if valid cookie exists without requiring user consent
+  async checkExistingCookie() {
+    // 🔒 Security fix: Completely remove automatic Cookie detection
+    // Should not read any cookies on first visit, must get explicit user consent first
+    return false;
+  }
+
+  // Save cookie consent to local storage
+  async saveCookieConsentToStorage(consent) {
+    try {
+      const value = consent ? 'granted' : 'denied';
+      await chrome.storage.local.set({ cookieConsent: value });
+    } catch (error) {
+      console.log('Cannot save Cookie consent status:', error);
+    }
+  }
+
+  // Clear cookie consent from local storage
+  clearCookieConsentFromStorage() {
+    try {
+      localStorage.removeItem('luma-cookie-consent');
+    } catch (error) {
+      console.log('Cannot clear Cookie consent status:', error);
+    }
+  }
+
+  // Show cookie consent dialog
+  // Cookie consent is now handled by popup - this function is no longer needed
+
+  // Handle cookie consent response
+  async handleCookieConsent(accepted) {
+    const consentDiv = document.querySelector('#luma-cookie-consent');
+
+    if (consentDiv) {
+      consentDiv.remove();
+    }
+
+    if (accepted) {
+      this.cookieConsent = true;
+      await this.saveCookieConsentToStorage(true); // Always save user choice, but provide ability to re-choose
+      console.log('✅ User agreed to Cookie usage');
+      await this.continueInit();
+    } else {
+      this.cookieConsent = false;
+      await this.saveCookieConsentToStorage(false); // Explicitly save denial status
+      console.log('❌ User denied Cookie usage, not showing interface');
+    }
+  }
+
+  // Show UI when cookie consent is denied
+  // Denied UI is removed - user doesn't want to see it
+
+  // Show cookie consent for scraping action
+  // Cookie consent for scraping is now handled by popup - this function is no longer needed
+
   // Get authentication cookies
   async getCookies() {
     try {
-      if (!this.extensionValid) {
-        throw new Error('扩展上下文已失效');
+      // Check Cookie consent status
+      if (!this.cookieConsent) {
+        throw new Error('User has not agreed to Cookie usage');
       }
-      
+
+      if (!this.extensionValid) {
+        throw new Error('Extension context invalidated');
+      }
+
       const response = await this.safeChromeMessage({ action: 'getCookies' });
       if (response.success) {
         this.authCookie = response.authCookie;
@@ -140,16 +379,16 @@ class LumaDataScraper {
       }
     } catch (error) {
       console.error('Failed to get auth cookie:', error);
-      
-      if (error.message.includes('扩展') || error.message.includes('Extension')) {
+
+      if (error.message.includes('Extension')) {
         this.extensionValid = false;
       }
-      
+
       return false;
     }
   }
 
-  // 获取或创建事件的独立状态
+  // Get or create independent status for event
   getEventState(eventId, eventElement = null) {
     if (!this.eventStates.has(eventId)) {
       this.eventStates.set(eventId, {
@@ -163,16 +402,16 @@ class LumaDataScraper {
         totalVisitors: []
       });
     }
-    
-    // 更新eventElement如果提供了新的
+
+    // Update eventElement if a new one is provided
     if (eventElement) {
       this.eventStates.get(eventId).eventElement = eventElement;
     }
-    
+
     return this.eventStates.get(eventId);
   }
 
-  // 清除事件状态
+  // Clear event state
   clearEventState(eventId) {
     this.eventStates.delete(eventId);
   }
@@ -186,7 +425,7 @@ class LumaDataScraper {
     }
 
     console.log('🔄 Initializing events list...');
-    
+
     try {
       const userEvents = await this.getUserEvents();
       if (!userEvents) {
@@ -194,7 +433,7 @@ class LumaDataScraper {
         this.createFallbackUI();
         return;
       }
-      
+
       if (!userEvents.events) {
         console.log('❌ No events array in response:', userEvents);
         this.createFallbackUI();
@@ -202,7 +441,7 @@ class LumaDataScraper {
       }
 
       const allEvents = userEvents.events.map(item => {
-        const event = item.event || item;  // 处理嵌套的事件数据结构
+        const event = item.event || item;  // Handle nested event data structure
         return {
           ...event,
           canScrape: event.show_guest_list === true && event.virtual_info?.has_access === true
@@ -211,7 +450,7 @@ class LumaDataScraper {
 
       this.allEvents = allEvents;
       this.createEventsListUI(allEvents);
-      
+
     } catch (error) {
       console.error('❌ Error in initEventsList:', error);
       this.createFallbackUI();
@@ -224,25 +463,29 @@ class LumaDataScraper {
     container.id = 'luma-scraper-events-container';
     container.innerHTML = `
       <div class="luma-scraper-header">
-        <h3>🎯 Luma数据抓取器</h3>
+        <h3>🎯 ${ContentLanguageManager.getText('title')}</h3>
         <div class="luma-status">
-          ✅ 已认证 | 找到 ${events.filter(e => e.canScrape).length}/${events.length} 个可抓取活动
+          ✅ ${ContentLanguageManager.getText('status.authenticated')} | ${ContentLanguageManager.getText('status.found')} ${events.filter(e => e.canScrape).length}/${events.length} ${ContentLanguageManager.getText('status.scrappable')}
+        </div>
+        <div class="luma-cookie-status" style="font-size: 11px; opacity: 0.8;">
+          🍪 ${ContentLanguageManager.getText('status.cookieAuthorized')}
         </div>
       </div>
       <div class="luma-events-list" id="luma-events-list">
-        ${events.length === 0 ? '<div class="no-events">暂无可抓取的活动</div>' : ''}
+        ${events.length === 0 ? `<div class="no-events">${ContentLanguageManager.getText('messages.noScrapableEvents')}</div>` : ''}
       </div>
     `;
 
     const style = document.createElement('style');
     style.textContent = this.getUIStyles();
-    
+
     document.head.appendChild(style);
     document.body.appendChild(container);
 
     this.addMinimizeButton(container);
     this.populateEventsList(events);
   }
+
 
   // Get UI styles
   getUIStyles() {
@@ -437,15 +680,23 @@ class LumaDataScraper {
       #luma-scraper-events-container.minimized {
         width: 60px;
         height: 60px;
+        cursor: move;
       }
       #luma-scraper-events-container.minimized .luma-scraper-header {
         padding: 18px;
         text-align: center;
+        cursor: move;
+      }
+      #luma-scraper-events-container.minimized .luma-scraper-header:hover {
+        background: linear-gradient(135deg, #5a6fd8 0%, #6b4a8a 100%);
       }
       #luma-scraper-events-container.minimized h3 {
         display: none;
       }
       #luma-scraper-events-container.minimized .luma-status {
+        display: none;
+      }
+      #luma-scraper-events-container.minimized .luma-cookie-status {
         display: none;
       }
       #luma-scraper-events-container.minimized .luma-events-list {
@@ -454,7 +705,7 @@ class LumaDataScraper {
     `;
   }
 
-  // Add minimize button
+  // Add minimize button and drag functionality
   addMinimizeButton(container) {
     const minimizeBtn = document.createElement('button');
     minimizeBtn.className = 'luma-minimize-btn';
@@ -464,56 +715,155 @@ class LumaDataScraper {
       minimizeBtn.textContent = container.classList.contains('minimized') ? '+' : '−';
     });
     container.querySelector('.luma-scraper-header').appendChild(minimizeBtn);
+    
+    // Add drag functionality
+    this.addDragFunctionality(container);
+  }
+
+  // Add drag functionality to container
+  addDragFunctionality(container) {
+    const header = container.querySelector('.luma-scraper-header');
+    let isDragging = false;
+    let currentX = 0;
+    let currentY = 0;
+    let initialX;
+    let initialY;
+    let xOffset = 0;
+    let yOffset = 0;
+
+    // Try to restore previous position from localStorage
+    const savedPosition = localStorage.getItem('luma-scraper-position');
+    if (savedPosition) {
+      const { x, y } = JSON.parse(savedPosition);
+      xOffset = x;
+      yOffset = y;
+      currentX = x;
+      currentY = y;
+      container.style.transform = `translate(${x}px, ${y}px)`;
+    }
+
+    const savePosition = () => {
+      localStorage.setItem('luma-scraper-position', JSON.stringify({ x: currentX, y: currentY }));
+    };
+
+    const dragStart = (e) => {
+      if (e.target.classList.contains('luma-minimize-btn')) {
+        return; // Don't drag when clicking minimize button
+      }
+      
+      const clientX = e.type === 'mousedown' ? e.clientX : e.touches[0].clientX;
+      const clientY = e.type === 'mousedown' ? e.clientY : e.touches[0].clientY;
+
+      initialX = clientX - xOffset;
+      initialY = clientY - yOffset;
+
+      if (e.target === header || header.contains(e.target)) {
+        isDragging = true;
+        container.style.transition = 'none';
+        container.style.userSelect = 'none';
+      }
+    };
+
+    const dragEnd = () => {
+      if (isDragging) {
+        initialX = currentX;
+        initialY = currentY;
+        isDragging = false;
+        container.style.transition = '';
+        container.style.userSelect = '';
+        savePosition();
+      }
+    };
+
+    const drag = (e) => {
+      if (isDragging) {
+        e.preventDefault();
+        
+        const clientX = e.type === 'mousemove' ? e.clientX : e.touches[0].clientX;
+        const clientY = e.type === 'mousemove' ? e.clientY : e.touches[0].clientY;
+
+        currentX = clientX - initialX;
+        currentY = clientY - initialY;
+
+        xOffset = currentX;
+        yOffset = currentY;
+
+        // Constrain to viewport
+        const rect = container.getBoundingClientRect();
+        const maxX = window.innerWidth - rect.width;
+        const maxY = window.innerHeight - rect.height;
+        
+        currentX = Math.max(0, Math.min(currentX, maxX));
+        currentY = Math.max(0, Math.min(currentY, maxY));
+
+        container.style.transform = `translate(${currentX}px, ${currentY}px)`;
+      }
+    };
+
+    // Mouse events
+    header.addEventListener('mousedown', dragStart);
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', dragEnd);
+
+    // Touch events for mobile
+    header.addEventListener('touchstart', dragStart, { passive: false });
+    document.addEventListener('touchmove', drag, { passive: false });
+    document.addEventListener('touchend', dragEnd);
+
+    // Prevent text selection during drag
+    header.addEventListener('selectstart', (e) => {
+      if (isDragging) e.preventDefault();
+    });
   }
 
   // Populate events list
   populateEventsList(events) {
     const listContainer = document.getElementById('luma-events-list');
-    
+
     events.forEach(event => {
       const eventItem = document.createElement('div');
       eventItem.className = 'luma-event-item';
-      
+
       const startDate = new Date(event.start_at).toLocaleString();
-      const location = event.location_type === 'offline' 
-        ? event.geo_address_info?.city || '线下活动'
+      const location = event.location_type === 'offline'
+        ? event.geo_address_info?.city || ContentLanguageManager.getText('events.offline')
         : event.location_type;
 
-      const accessStatus = event.canScrape 
-        ? '✅ Guest列表可见 | 🔑 有访问权限'
-        : event.show_guest_list 
-          ? '✅ Guest列表可见 | ❌ 无访问权限'
-          : '❌ Guest列表不可见';
+      const accessStatus = event.canScrape
+        ? `✅ ${ContentLanguageManager.getText('events.guestListVisible')} | 🔑 ${ContentLanguageManager.getText('events.hasAccess')}`
+        : event.show_guest_list
+          ? `✅ ${ContentLanguageManager.getText('events.guestListVisible')} | ❌ ${ContentLanguageManager.getText('events.noAccess')}`
+          : `❌ ${ContentLanguageManager.getText('events.guestListHidden')}`;
 
       eventItem.innerHTML = `
         <div class="luma-event-name">${event.name}</div>
         <div class="luma-event-info">
           📅 ${startDate}<br>
           📍 ${location}<br>
-          🎫 ${event.visibility} | ${accessStatus}
+          🎫 ${event.visibility} | <span class="event-access-text">${accessStatus}</span>
         </div>
         ${event.canScrape ? `
         <div class="luma-event-actions">
           <div class="luma-btn-row">
             <button class="luma-btn luma-btn-primary scrape-auto-btn" data-event-id="${event.api_id}" data-mode="auto">
-              🤖 自动抓取
+              ${ContentLanguageManager.getText('buttons.autoScrape')}
             </button>
             <button class="luma-btn luma-btn-success scrape-manual-btn" data-event-id="${event.api_id}" data-mode="manual">
-              👆 手动抓取
+              ${ContentLanguageManager.getText('buttons.manualScrape')}
             </button>
           </div>
           <div class="luma-btn-row" style="margin-top: 8px;">
             <button class="luma-btn luma-btn-warning view-btn" data-event-id="${event.api_id}">
-              查看详情
+              ${ContentLanguageManager.getText('buttons.viewDetails')}
             </button>
             <button class="luma-btn luma-btn-danger stop-btn" data-event-id="${event.api_id}" style="display: none;">
-              停止抓取
+              ${ContentLanguageManager.getText('buttons.stop')}
             </button>
           </div>
           <div class="luma-manual-controls" style="display: none;">
             <div class="luma-btn-row" style="margin-top: 8px;">
               <button class="luma-btn luma-btn-success next-page-btn" data-event-id="${event.api_id}">
-                下一页
+                ${ContentLanguageManager.getText('buttons.nextPage')}
               </button>
             </div>
           </div>
@@ -522,21 +872,21 @@ class LumaDataScraper {
         <div class="luma-event-actions">
           <div class="luma-btn-row">
             <button class="luma-btn luma-btn-disabled" disabled>
-              无法抓取
+              ${ContentLanguageManager.getText('events.noAccess')}
             </button>
             <button class="luma-btn luma-btn-warning view-btn" data-event-id="${event.api_id}">
-              查看详情
+              ${ContentLanguageManager.getText('buttons.viewDetails')}
             </button>
           </div>
         </div>
         `}
         <div class="luma-progress" id="progress-${event.api_id}">
-          <div class="progress-text">准备中...</div>
+          <div class="progress-text">${ContentLanguageManager.getText('messages.ready')}</div>
           <div class="luma-progress-bar">
             <div class="luma-progress-fill"></div>
           </div>
           <div class="progress-stats" style="font-size: 11px; margin-top: 4px; color: #666;">
-            页数: <span class="page-count">0</span> | 数据: <span class="data-count">0</span> 条
+            ${ContentLanguageManager.getText('messages.page')}: <span class="page-count">0</span> | ${ContentLanguageManager.getText('messages.items')}: <span class="data-count">0</span>
           </div>
         </div>
       `;
@@ -553,37 +903,36 @@ class LumaDataScraper {
     const viewBtn = eventItem.querySelector('.view-btn');
     const nextPageBtn = eventItem.querySelector('.next-page-btn');
     const stopBtn = eventItem.querySelector('.stop-btn');
-    const manualControls = eventItem.querySelector('.luma-manual-controls');
 
-    // 自动抓取按钮
+    // Auto scrape button
     if (scrapeAutoBtn) {
       scrapeAutoBtn.addEventListener('click', () => {
         this.startEventScraping(event.api_id, eventItem, 'auto');
       });
     }
 
-    // 手动抓取按钮
+    // Manual scrape button
     if (scrapeManualBtn) {
       scrapeManualBtn.addEventListener('click', () => {
         this.startEventScraping(event.api_id, eventItem, 'manual');
       });
     }
 
-    // 查看详情按钮
+    // View details button
     if (viewBtn) {
       viewBtn.addEventListener('click', () => {
         this.showEventDetails(event);
       });
     }
 
-    // 下一页按钮
+    // Next page button
     if (nextPageBtn) {
       nextPageBtn.addEventListener('click', () => {
         this.manualNextPage(event.api_id, eventItem);
       });
     }
 
-    // 停止抓取按钮
+    // Stop scraping button
     if (stopBtn) {
       stopBtn.addEventListener('click', () => {
         this.stopScraping(event.api_id, eventItem);
@@ -593,79 +942,89 @@ class LumaDataScraper {
 
   // Start event scraping
   async startEventScraping(eventApiId, eventElement, mode = 'auto') {
-    console.log(`🚀 开始抓取事件 ${eventApiId}，模式: ${mode}`);
-    
+    console.log(`🚀 Starting to scrape event ${eventApiId}, mode: ${mode}`);
+
     try {
-      if (!this.extensionValid) {
-        throw new Error('扩展上下文已失效，请刷新页面');
+      // Check Cookie consent status
+      if (!this.cookieConsent) {
+        console.log('⚠️ Cookie permission required to scrape, please authorize in plugin popup');
+        throw new Error('Cookie permission required to scrape, please authorize in plugin popup');
       }
-      
-      await this.safeChromeMessage({ action: 'getCookies' });
-      
+
+      if (!this.extensionValid) {
+        throw new Error('Extension context invalidated');
+      }
+
+      // Re-validate Cookie permissions
+      const cookieSuccess = await this.getCookies();
+      if (!cookieSuccess) {
+        throw new Error('Cookie permission validation failed');
+      }
+
       const progressEl = eventElement.querySelector('.luma-progress');
       const scrapeAutoBtn = eventElement.querySelector('.scrape-auto-btn');
       const scrapeManualBtn = eventElement.querySelector('.scrape-manual-btn');
       const stopBtn = eventElement.querySelector('.stop-btn');
       const manualControls = eventElement.querySelector('.luma-manual-controls');
-      
-      // 获取事件独立状态
+
+      // Get independent event status
       const eventState = this.getEventState(eventApiId, eventElement);
       eventState.mode = mode;
       eventState.page = 0;
       eventState.visitors = [];
       eventState.isRunning = true;
       eventState.cursor = null;
-      
+
       progressEl.classList.add('active');
-      
-      // 禁用抓取按钮，显示停止按钮
+
+      // Disable scrape buttons, show stop button
       if (scrapeAutoBtn) {
         scrapeAutoBtn.disabled = true;
-        scrapeAutoBtn.textContent = mode === 'auto' ? '🤖 抓取中...' : '🤖 自动抓取';
+        scrapeAutoBtn.textContent = mode === 'auto' ? ContentLanguageManager.getText('buttons.scraping') : ContentLanguageManager.getText('buttons.autoScrape');
       }
       if (scrapeManualBtn) {
         scrapeManualBtn.disabled = true;
-        scrapeManualBtn.textContent = mode === 'manual' ? '👆 抓取中...' : '👆 手动抓取';
+        scrapeManualBtn.textContent = mode === 'manual' ? ContentLanguageManager.getText('buttons.scraping') : ContentLanguageManager.getText('buttons.manualScrape');
       }
-      
+
       stopBtn.style.display = 'inline-block';
-      
+
       if (mode === 'manual') {
         manualControls.style.display = 'block';
       }
-      
+
       await this.fetchNextPage(eventApiId);
-      
+
     } catch (error) {
       console.error('Event scraping failed:', error);
-      
+
       const progressText = eventElement.querySelector('.progress-text');
       const scrapeAutoBtn = eventElement.querySelector('.scrape-auto-btn');
       const scrapeManualBtn = eventElement.querySelector('.scrape-manual-btn');
       const stopBtn = eventElement.querySelector('.stop-btn');
-      
+
       if (progressText) {
-        progressText.textContent = `抓取失败: ${error.message}`;
+        progressText.textContent = `${ContentLanguageManager.getText('messages.failed')}: ${error.message}`;
       }
-      
-      // 重置按钮状态
+
+      // Reset button status
       if (scrapeAutoBtn) {
-        scrapeAutoBtn.textContent = '🤖 自动抓取';
+        scrapeAutoBtn.textContent = ContentLanguageManager.getText('buttons.autoScrape');
         scrapeAutoBtn.disabled = false;
         scrapeAutoBtn.style.background = '#dc3545';
       }
       if (scrapeManualBtn) {
-        scrapeManualBtn.textContent = '👆 手动抓取';
+        scrapeManualBtn.textContent = ContentLanguageManager.getText('buttons.manualScrape');
         scrapeManualBtn.disabled = false;
         scrapeManualBtn.style.background = '#dc3545';
       }
       if (stopBtn) {
         stopBtn.style.display = 'none';
       }
-      
+
       this.isRunning = false;
-      
-      if (error.message.includes('扩展') || error.message.includes('Extension')) {
+
+      if (error.message.includes('Extension')) {
         this.showExtensionError();
       }
     }
@@ -674,25 +1033,25 @@ class LumaDataScraper {
   // Fetch next page of visitor data
   async fetchNextPage(eventId) {
     const eventState = this.getEventState(eventId);
-    
+
     if (!eventState.isRunning) {
-      console.log('❌ 抓取已停止');
+      console.log('❌ Scraping has been stopped');
       return;
     }
-    
+
     if (!this.authValue || !this.cookieHeader) {
-      console.log('❌ 认证失败');
+      console.log('❌ Authentication failed');
       const cookieSuccess = await this.getCookies();
       if (!cookieSuccess) {
-        console.log('❌ 重新获取Cookie失败，停止抓取');
+        console.log('❌ Cookie re-retrieval failed, stopping scrape');
         this.stopScraping(eventId, eventState.eventElement);
         return;
       }
-      console.log('✅ 重新获取Cookie成功，继续抓取');
+      console.log('✅ Cookie re-retrieval successful, continuing scrape');
     }
-    
+
     if (!eventId) {
-      console.log('❌ 无效的事件ID');
+      console.log('❌ Invalid event ID');
       return;
     }
 
@@ -700,16 +1059,16 @@ class LumaDataScraper {
     const progressFill = eventState.eventElement.querySelector('.luma-progress-fill');
     const pageCountEl = eventState.eventElement.querySelector('.page-count');
     const dataCountEl = eventState.eventElement.querySelector('.data-count');
-    
+
     eventState.page++;
-    progressText.textContent = `抓取第 ${eventState.page} 页...`;
-    
+    progressText.textContent = `${ContentLanguageManager.getText('messages.page')} ${eventState.page}...`;
+
     try {
       const baseUrl = "https://api2.luma.com/event/get-guest-list";
       const url = new URL(baseUrl);
       url.searchParams.set("event_api_id", eventId);
       url.searchParams.set("pagination_limit", "100");
-      
+
       if (eventState.cursor) {
         url.searchParams.set("pagination_cursor", eventState.cursor);
       }
@@ -725,8 +1084,8 @@ class LumaDataScraper {
         'x-luma-web-url': 'https://luma.com/home'
       };
 
-      console.log(`📡 API调用: ${url.toString()}`);
-      
+      console.log(`📡 API call: ${url.toString()}`);
+
       const response = await fetch(url.toString(), {
         method: 'GET',
         headers: headers,
@@ -734,15 +1093,15 @@ class LumaDataScraper {
       });
 
       if (!response.ok) {
-        throw new Error(`API请求失败: ${response.status} ${response.statusText}`);
+        throw new Error(`API request failed: ${response.status} ${response.statusText}`);
       }
 
       const data = await response.json();
-      console.log(`📄 第 ${eventState.page} 页响应:`, data);
+      console.log(`📄 Page ${eventState.page} response:`, data);
 
       let pageVisitors = [];
       let rawEntries = [];
-      
+
       if (data.entries && Array.isArray(data.entries)) {
         rawEntries = data.entries;
       } else if (data.guests && Array.isArray(data.guests)) {
@@ -754,11 +1113,11 @@ class LumaDataScraper {
       if (rawEntries.length > 0) {
         pageVisitors = rawEntries.map(entry => {
           const user = entry.user || entry.guest || entry;
-          
+
           if (!user || !user.api_id) {
             return null;
           }
-          
+
           return {
             api_id: user.api_id,
             event_api_id: eventState.eventId,
@@ -780,45 +1139,45 @@ class LumaDataScraper {
         }).filter(v => v !== null);
       }
 
-      // 添加去重逻辑，根据api_id去重
+      // Add deduplication logic, deduplicate by api_id
       const existingIds = new Set(eventState.totalVisitors.map(v => v.api_id));
       const newVisitors = pageVisitors.filter(v => !existingIds.has(v.api_id));
       eventState.totalVisitors = [...eventState.totalVisitors, ...newVisitors];
-      
+
       pageCountEl.textContent = eventState.page;
       dataCountEl.textContent = eventState.totalVisitors.length;
-      progressText.textContent = `第 ${eventState.page} 页完成，共 ${newVisitors.length} 条新数据 (去重后)`;
+      progressText.textContent = `${ContentLanguageManager.getText('messages.page')} ${eventState.page} ${ContentLanguageManager.getText('messages.completed')}, ${newVisitors.length} ${ContentLanguageManager.getText('messages.newData')} ${ContentLanguageManager.getText('messages.deduped')}`;
       progressFill.style.width = Math.min((eventState.page / 10) * 100, 90) + '%';
 
-      console.log(`✅ 第 ${eventState.page} 页完成，本页 ${pageVisitors.length} 条，新增 ${newVisitors.length} 条，累计 ${eventState.totalVisitors.length} 条`);
-      
+      console.log(`✅ Page ${eventState.page} completed, ${pageVisitors.length} items on this page, ${newVisitors.length} new items, ${eventState.totalVisitors.length} total`);
+
       eventState.cursor = data.next_cursor || data.pagination_cursor || data.cursor;
       const hasMore = !!eventState.cursor && pageVisitors.length > 0;
 
       if (hasMore && eventState.mode === 'auto') {
-        const delay = Math.floor(Math.random() * 3000) + 3000; // 3-6秒随机延迟
-        progressText.textContent = `等待 ${Math.ceil(delay/1000)} 秒后继续...`;
-        
+        const delay = Math.floor(Math.random() * 3000) + 3000; // 3-6 second random delay
+        progressText.textContent = `${ContentLanguageManager.getText('messages.waitingSeconds')} ${Math.ceil(delay / 1000)} ${ContentLanguageManager.getText('messages.secondsAndContinue')}`;
+
         setTimeout(() => {
           this.fetchNextPage(eventId);
         }, delay);
       } else if (hasMore && eventState.mode === 'manual') {
-        progressText.textContent = `第 ${eventState.page} 页完成，点击"下一页"继续`;
+        progressText.textContent = `${ContentLanguageManager.getText('messages.page')} ${eventState.page} ${ContentLanguageManager.getText('messages.completed')}, click '${ContentLanguageManager.getText('buttons.nextPage')}' to continue`;
         const nextBtn = eventState.eventElement.querySelector('.next-page-btn');
         nextBtn.disabled = false;
-        nextBtn.textContent = '下一页';
+        nextBtn.textContent = ContentLanguageManager.getText('buttons.nextPage');
       } else {
         await this.completeScraping(eventId);
       }
 
     } catch (error) {
-      console.error(`❌ 第 ${eventState.page} 页抓取失败:`, error);
-      progressText.textContent = `第 ${eventState.page} 页失败: ${error.message}`;
-      
+      console.error(`❌ Page ${eventState.page} scraping failed:`, error);
+      progressText.textContent = `${ContentLanguageManager.getText('messages.page')} ${eventState.page} ${ContentLanguageManager.getText('messages.failed')}: ${error.message}`;
+
       if (eventState.mode === 'manual') {
         const nextBtn = eventState.eventElement.querySelector('.next-page-btn');
         nextBtn.disabled = false;
-        nextBtn.textContent = '重试';
+        nextBtn.textContent = ContentLanguageManager.getText('buttons.retry');
       }
     }
   }
@@ -827,55 +1186,55 @@ class LumaDataScraper {
   async manualNextPage(eventApiId, eventElement) {
     const nextBtn = eventElement.querySelector('.next-page-btn');
     nextBtn.disabled = true;
-    nextBtn.textContent = '抓取中...';
-    
+    nextBtn.textContent = ContentLanguageManager.getText('buttons.scraping');
+
     await this.fetchNextPage(eventApiId);
   }
 
   // Stop scraping
   stopScraping(eventApiId, eventElement) {
-    console.log(`⏹️ 停止抓取事件 ${eventApiId}`);
-    
+    console.log(`⏹️ Stop scraping event ${eventApiId}`);
+
     const eventState = this.getEventState(eventApiId, eventElement);
     eventState.isRunning = false;
-    
+
     if (!eventElement) {
-      console.log('⚠️ eventElement为空，无法更新UI');
+      console.log('⚠️ eventElement is empty, cannot update UI');
       return;
     }
-    
+
     const progressText = eventElement.querySelector('.progress-text');
     const scrapeAutoBtn = eventElement.querySelector('.scrape-auto-btn');
     const scrapeManualBtn = eventElement.querySelector('.scrape-manual-btn');
     const stopBtn = eventElement.querySelector('.stop-btn');
     const manualControls = eventElement.querySelector('.luma-manual-controls');
-    
+
     if (progressText) {
-      progressText.textContent = `已停止 (共抓取 ${eventState.totalVisitors ? eventState.totalVisitors.length : 0} 条数据)`;
+      progressText.textContent = `${ContentLanguageManager.getText('messages.stopped')} (${ContentLanguageManager.getText('messages.scraped')} ${eventState.totalVisitors ? eventState.totalVisitors.length : 0} ${ContentLanguageManager.getText('messages.items')})`;
     }
-    
-    // 重置按钮状态并添加重置按钮
+
+    // Reset button status and add reset button
     if (scrapeAutoBtn) {
-      scrapeAutoBtn.textContent = '🤖 自动抓取';
+      scrapeAutoBtn.textContent = ContentLanguageManager.getText('buttons.autoScrape');
       scrapeAutoBtn.disabled = true;
       scrapeAutoBtn.style.background = '#6c757d';
     }
     if (scrapeManualBtn) {
-      scrapeManualBtn.textContent = '👆 手动抓取';
+      scrapeManualBtn.textContent = ContentLanguageManager.getText('buttons.manualScrape');
       scrapeManualBtn.disabled = true;
       scrapeManualBtn.style.background = '#6c757d';
     }
     if (stopBtn) {
       stopBtn.style.display = 'none';
     }
-    
-    // 添加重置按钮
+
+    // Add reset button
     this.addResetButton(eventElement, eventApiId);
-    
+
     if (manualControls) {
       manualControls.style.display = 'none';
     }
-    
+
     if (eventState.totalVisitors && eventState.totalVisitors.length > 0) {
       this.completeScraping(eventApiId);
     }
@@ -884,26 +1243,26 @@ class LumaDataScraper {
   // Complete scraping
   async completeScraping(eventId) {
     const eventState = this.getEventState(eventId);
-    console.log(`🎉 抓取完成! 共获取 ${eventState.totalVisitors.length} 条guest数据`);
-    
+    console.log(`🎉 Scraping completed! Got ${eventState.totalVisitors.length} guest data items`);
+
     const progressText = eventState.eventElement.querySelector('.progress-text');
     const progressFill = eventState.eventElement.querySelector('.luma-progress-fill');
     const scrapeAutoBtn = eventState.eventElement.querySelector('.scrape-auto-btn');
     const scrapeManualBtn = eventState.eventElement.querySelector('.scrape-manual-btn');
     const stopBtn = eventState.eventElement.querySelector('.stop-btn');
     const manualControls = eventState.eventElement.querySelector('.luma-manual-controls');
-    
-    progressText.textContent = `抓取完成! 共 ${eventState.totalVisitors.length} 条guest数据`;
+
+    progressText.textContent = `${ContentLanguageManager.getText('messages.completed')}! ${ContentLanguageManager.getText('messages.total')} ${eventState.totalVisitors.length} ${ContentLanguageManager.getText('messages.items')}`;
     progressFill.style.width = '100%';
-    
-    // 更新按钮状态
+
+    // Update button status
     if (scrapeAutoBtn) {
-      scrapeAutoBtn.textContent = '✅ 抓取完成';
+      scrapeAutoBtn.textContent = ContentLanguageManager.getText('buttons.completed');
       scrapeAutoBtn.style.background = '#28a745';
       scrapeAutoBtn.disabled = true;
     }
     if (scrapeManualBtn) {
-      scrapeManualBtn.textContent = '✅ 抓取完成';
+      scrapeManualBtn.textContent = ContentLanguageManager.getText('buttons.completed');
       scrapeManualBtn.style.background = '#28a745';
       scrapeManualBtn.disabled = true;
     }
@@ -911,15 +1270,15 @@ class LumaDataScraper {
       stopBtn.style.display = 'none';
     }
     manualControls.style.display = 'none';
-    
+
     eventState.isRunning = false;
 
     if (eventState.totalVisitors.length > 0) {
       try {
         if (!this.extensionValid) {
-          throw new Error('扩展上下文已失效，无法保存到扩展存储');
+          throw new Error('Extension context invalidated, cannot save to extension storage');
         }
-        
+
         await this.safeChromeMessage({
           action: 'saveData',
           data: {
@@ -934,19 +1293,19 @@ class LumaDataScraper {
           }
         });
 
-        console.log('✅ 数据已保存到本地存储');
+        console.log('✅ Data saved to local storage');
         this.addExportButton(eventState.eventElement, eventState.totalVisitors, eventState.eventId);
         this.addResetButton(eventState.eventElement, eventState.eventId);
-        
+
       } catch (error) {
-        console.error('❌ 保存数据失败:', error);
-        
-        if (error.message.includes('扩展') || error.message.includes('Extension')) {
-          progressText.textContent = `抓取完成! 扩展存储失效，请直接导出CSV`;
+        console.error('❌ Save data failed:', error);
+
+        if (error.message.includes('Extension')) {
+          progressText.textContent = `${ContentLanguageManager.getText('messages.completed')}! ${ContentLanguageManager.getText('messages.extensionStorageInvalid')}`;
           this.addExportButton(eventState.eventElement, eventState.totalVisitors, eventState.eventId);
           this.addResetButton(eventState.eventElement, eventState.eventId);
         } else {
-          progressText.textContent = `抓取完成但保存失败: ${error.message}`;
+          progressText.textContent = `${ContentLanguageManager.getText('messages.completed')} but save ${ContentLanguageManager.getText('messages.failed')}: ${error.message}`;
         }
       }
     }
@@ -955,58 +1314,58 @@ class LumaDataScraper {
   // Add export button
   addExportButton(eventElement, visitors, eventId) {
     const actionsRow = eventElement.querySelector('.luma-btn-row');
-    
+
     if (actionsRow.querySelector('.export-btn')) {
       return;
     }
-    
+
     const exportBtn = document.createElement('button');
     exportBtn.className = 'luma-btn luma-btn-success export-btn';
-    exportBtn.textContent = `导出 CSV (${visitors.length}条)`;
+    exportBtn.textContent = `${ContentLanguageManager.getText('buttons.export')} (${visitors.length}${ContentLanguageManager.getText('messages.items')})`;
     exportBtn.style.marginTop = '8px';
     exportBtn.style.width = '100%';
-    
+
     exportBtn.addEventListener('click', () => {
       this.exportToCSV(visitors, eventId);
     });
-    
+
     actionsRow.parentNode.appendChild(exportBtn);
   }
 
   // Add reset button
   addResetButton(eventElement, eventApiId) {
     const actionsContainer = eventElement.querySelector('.luma-event-actions');
-    
-    // 检查是否已经有重置按钮
+
+    // Check if reset button already exists
     if (actionsContainer.querySelector('.reset-btn')) {
       return;
     }
-    
+
     const resetBtn = document.createElement('button');
     resetBtn.className = 'luma-btn luma-btn-secondary reset-btn';
-    resetBtn.textContent = '🔄 重置状态';
+    resetBtn.textContent = ContentLanguageManager.getText('buttons.reset');
     resetBtn.style.cssText = `
       margin-top: 8px;
       width: 100%;
       background: #17a2b8;
       color: white;
     `;
-    
+
     resetBtn.addEventListener('click', () => {
       this.resetEventState(eventApiId, eventElement);
     });
-    
+
     actionsContainer.appendChild(resetBtn);
   }
 
   // Reset event state to initial condition
   resetEventState(eventApiId, eventElement) {
-    console.log(`🔄 重置事件状态: ${eventApiId}`);
-    
-    // 清除事件状态
+    console.log(`🔄 Reset event status: ${eventApiId}`);
+
+    // Clear event state
     this.clearEventState(eventApiId);
-    
-    // 重置UI元素
+
+    // Reset UI elements
     const progressEl = eventElement.querySelector('.luma-progress');
     const progressText = eventElement.querySelector('.progress-text');
     const progressFill = eventElement.querySelector('.luma-progress-fill');
@@ -1018,15 +1377,15 @@ class LumaDataScraper {
     const manualControls = eventElement.querySelector('.luma-manual-controls');
     const resetBtn = eventElement.querySelector('.reset-btn');
     const exportBtn = eventElement.querySelector('.export-btn');
-    
-    // 隐藏进度条
+
+    // Hide progress bar
     if (progressEl) {
       progressEl.classList.remove('active');
     }
-    
-    // 重置进度文本和填充
+
+    // Reset progress text and fill
     if (progressText) {
-      progressText.textContent = '准备中...';
+      progressText.textContent = ContentLanguageManager.getText('messages.ready');
     }
     if (progressFill) {
       progressFill.style.width = '0%';
@@ -1037,15 +1396,15 @@ class LumaDataScraper {
     if (dataCountEl) {
       dataCountEl.textContent = '0';
     }
-    
-    // 重置按钮状态
+
+    // Reset button status
     if (scrapeAutoBtn) {
-      scrapeAutoBtn.textContent = '🤖 自动抓取';
+      scrapeAutoBtn.textContent = ContentLanguageManager.getText('buttons.autoScrape');
       scrapeAutoBtn.disabled = false;
       scrapeAutoBtn.style.background = '';
     }
     if (scrapeManualBtn) {
-      scrapeManualBtn.textContent = '👆 手动抓取';
+      scrapeManualBtn.textContent = ContentLanguageManager.getText('buttons.manualScrape');
       scrapeManualBtn.disabled = false;
       scrapeManualBtn.style.background = '';
     }
@@ -1055,26 +1414,26 @@ class LumaDataScraper {
     if (manualControls) {
       manualControls.style.display = 'none';
     }
-    
-    // 移除重置按钮和导出按钮
+
+    // Remove reset and export buttons
     if (resetBtn) {
       resetBtn.remove();
     }
     if (exportBtn) {
       exportBtn.remove();
     }
-    
-    console.log('✅ 事件状态已重置到初始状态');
+
+    console.log('✅ Event status reset to initial state');
   }
 
   // Export to CSV
   exportToCSV(visitors, eventId, eventName = null) {
     if (!visitors || visitors.length === 0) {
-      alert('没有数据可导出');
+      alert(ContentLanguageManager.getText('messages.noDataToExport'));
       return;
     }
 
-    // 如果没有提供事件名称，尝试从 allEvents 中查找
+    // If no event name provided, try to find from allEvents
     if (!eventName && this.allEvents) {
       const event = this.allEvents.find(e => e.api_id === eventId);
       eventName = event ? event.name : null;
@@ -1085,10 +1444,10 @@ class LumaDataScraper {
       'is_verified', 'last_online_at', 'twitter_handle', 'youtube_handle',
       'linkedin_handle', 'instagram_handle', 'avatar_url', 'created_at', 'updated_at'
     ];
-    
+
     const csvContent = [
       headers.join(','),
-      ...visitors.map(visitor => 
+      ...visitors.map(visitor =>
         headers.map(header => {
           const value = visitor[header] || '';
           if (value.toString().includes(',') || value.toString().includes('"')) {
@@ -1103,42 +1462,78 @@ class LumaDataScraper {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    
-    // 生成文件名
+
+    // Generate filename
     const now = new Date();
-    const dateTime = now.getFullYear() + 
-      String(now.getMonth() + 1).padStart(2, '0') + 
+    const dateTime = now.getFullYear() +
+      String(now.getMonth() + 1).padStart(2, '0') +
       String(now.getDate()).padStart(2, '0') + '_' +
-      String(now.getHours()).padStart(2, '0') + 
-      String(now.getMinutes()).padStart(2, '0') + 
+      String(now.getHours()).padStart(2, '0') +
+      String(now.getMinutes()).padStart(2, '0') +
       String(now.getSeconds()).padStart(2, '0');
-    
-    // 清理会议名称，移除不适合文件名的字符
-    const cleanEventName = eventName 
+
+    // Clean meeting name, remove characters unsuitable for filenames
+    const cleanEventName = eventName
       ? eventName.replace(/[<>:"/\\|?*]/g, '_').substring(0, 50)
       : 'luma_event';
-    
+
     a.download = `${cleanEventName}_guest_${dateTime}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    
-    console.log(`📁 CSV文件已下载: ${visitors.length} 条guest数据, 文件名: ${a.download}`);
+
+    console.log(`📁 CSV file downloaded: ${visitors.length} guest data items, filename: ${a.download}`);
   }
 
   // Create fallback UI
   createFallbackUI() {
     console.log('Creating fallback UI...');
+
+    const container = document.createElement('div');
+    container.id = 'luma-scraper-events-container';
+    container.innerHTML = `
+      <div class="luma-scraper-header">
+        <h3>🎯 ${ContentLanguageManager.getText('title')}</h3>
+        <div class="luma-status">
+          ✅ ${ContentLanguageManager.getText('status.authenticated')} | ${ContentLanguageManager.getText('messages.failed')} to get event list
+        </div>
+        <div class="luma-cookie-status" style="font-size: 11px; opacity: 0.8;">
+          🍪 ${ContentLanguageManager.getText('status.cookieAuthorized')}
+        </div>
+      </div>
+      <div class="luma-events-list">
+        <div style="padding: 20px; text-align: center; color: #636e72;">
+          <div style="font-size: 48px; margin-bottom: 16px;">⚠️</div>
+          <h4 style="margin: 0 0 12px 0;">${ContentLanguageManager.getText('messages.failed')} to get event list</h4>
+          <p style="line-height: 1.5;">
+            ${ContentLanguageManager.getText('messages.possibleReasons')}
+            <br>• ${ContentLanguageManager.getText('messages.networkIssue')}
+            <br>• ${ContentLanguageManager.getText('messages.apiUnavailable')}
+            <br>• ${ContentLanguageManager.getText('messages.authAbnormal')}
+            <br><br>
+            ${ContentLanguageManager.getText('messages.refreshPage')}
+          </p>
+        </div>
+      </div>
+    `;
+
+    const style = document.createElement('style');
+    style.textContent = this.getUIStyles();
+
+    document.head.appendChild(style);
+    document.body.appendChild(container);
+
+    this.addMinimizeButton(container);
   }
 
   // Show event details
   showEventDetails(event) {
-    // 移除已存在的详情弹窗
+    // Remove existing detail modal
     const existingModal = document.querySelector('#luma-event-detail-modal');
     if (existingModal) {
       existingModal.remove();
     }
 
-    // 创建详情弹窗
+    // Create detail modal
     const modal = document.createElement('div');
     modal.id = 'luma-event-detail-modal';
     modal.style.cssText = `
@@ -1169,20 +1564,20 @@ class LumaDataScraper {
 
     const startDate = new Date(event.start_at);
     const endDate = event.end_at ? new Date(event.end_at) : null;
-    const location = event.location_type === 'offline' 
-      ? (event.geo_address_info?.address || event.geo_address_info?.city || '线下活动')
+    const location = event.location_type === 'offline'
+      ? (event.geo_address_info?.address || event.geo_address_info?.city || ContentLanguageManager.getText('events.offline'))
       : event.location_type;
-    
-    const accessStatus = event.canScrape 
-      ? '✅ Guest列表可见 | 🔑 有访问权限'
-      : event.show_guest_list 
-        ? '✅ Guest列表可见 | ❌ 无访问权限'
-        : '❌ Guest列表不可见';
+
+    const accessStatus = event.canScrape
+      ? `✅ ${ContentLanguageManager.getText('events.guestListVisible')} | 🔑 ${ContentLanguageManager.getText('events.hasAccess')}`
+      : event.show_guest_list
+        ? `✅ ${ContentLanguageManager.getText('events.guestListVisible')} | ❌ ${ContentLanguageManager.getText('events.noAccess')}`
+        : `❌ ${ContentLanguageManager.getText('events.guestListHidden')}`;
 
     modalContent.innerHTML = `
       <div style="position: relative;">
         ${event.cover_url ? `
-          <img src="${event.cover_url}" alt="活动封面" style="
+          <img src="${event.cover_url}" alt="Event Cover" style="
             width: 100%;
             height: 200px;
             object-fit: cover;
@@ -1231,31 +1626,31 @@ class LumaDataScraper {
           <div style="display: flex; align-items: center; gap: 8px;">
             <span style="font-size: 16px;">📅</span>
             <div>
-              <div><strong>开始时间:</strong> ${startDate.toLocaleString()}</div>
-              ${endDate ? `<div><strong>结束时间:</strong> ${endDate.toLocaleString()}</div>` : ''}
+              <div><strong>${ContentLanguageManager.getText('events.startTimeLabel')}</strong> ${startDate.toLocaleString()}</div>
+              ${endDate ? `<div><strong>${ContentLanguageManager.getText('events.endTimeLabel')}</strong> ${endDate.toLocaleString()}</div>` : ''}
             </div>
           </div>
           
           <div style="display: flex; align-items: center; gap: 8px;">
             <span style="font-size: 16px;">📍</span>
-            <div><strong>地点:</strong> ${location}</div>
+            <div><strong>${ContentLanguageManager.getText('events.locationLabel')}</strong> ${location}</div>
           </div>
           
           <div style="display: flex; align-items: center; gap: 8px;">
             <span style="font-size: 16px;">🎫</span>
-            <div><strong>可见性:</strong> ${event.visibility}</div>
+            <div><strong>${ContentLanguageManager.getText('events.visibilityLabel')}</strong> ${event.visibility}</div>
           </div>
           
           <div style="display: flex; align-items: flex-start; gap: 8px;">
             <span style="font-size: 16px;">🔐</span>
-            <div><strong>抓取状态:</strong> ${accessStatus}</div>
+            <div><strong>${ContentLanguageManager.getText('events.scrapeStatusLabel')}</strong> ${accessStatus}</div>
           </div>
           
           ${event.description ? `
             <div style="display: flex; align-items: flex-start; gap: 8px;">
               <span style="font-size: 16px;">📝</span>
               <div>
-                <div><strong>描述:</strong></div>
+                <div><strong>${ContentLanguageManager.getText('events.description')}:</strong></div>
                 <div style="margin-top: 4px; line-height: 1.5; max-height: 120px; overflow-y: auto; padding: 8px; background: #f8f9fa; border-radius: 4px;">
                   ${event.description.replace(/\n/g, '<br>')}
                 </div>
@@ -1266,7 +1661,7 @@ class LumaDataScraper {
           ${event.guest_count ? `
             <div style="display: flex; align-items: center; gap: 8px;">
               <span style="font-size: 16px;">👥</span>
-              <div><strong>参与人数:</strong> ${event.guest_count} 人</div>
+              <div><strong>${ContentLanguageManager.getText('events.guestCountLabel')}</strong> ${event.guest_count}</div>
             </div>
           ` : ''}
         </div>
@@ -1283,7 +1678,7 @@ class LumaDataScraper {
             font-weight: 500;
             transition: background 0.2s;
           " onmouseover="this.style.background='#5a6fd8'" onmouseout="this.style.background='#667eea'">
-            🔗 查看原页面
+            🔗 ${ContentLanguageManager.getText('events.viewOriginal')}
           </a>
           
           <button onclick="this.closest('#luma-event-detail-modal').remove()" style="
@@ -1297,7 +1692,7 @@ class LumaDataScraper {
             cursor: pointer;
             transition: background 0.2s;
           " onmouseover="this.style.background='#5a6268'" onmouseout="this.style.background='#6c757d'">
-            关闭
+            ${ContentLanguageManager.getText('events.close')}
           </button>
         </div>
       </div>
@@ -1306,14 +1701,14 @@ class LumaDataScraper {
     modal.appendChild(modalContent);
     document.body.appendChild(modal);
 
-    // 点击模态框背景关闭
+    // Click modal background to close
     modal.addEventListener('click', (e) => {
       if (e.target === modal) {
         modal.remove();
       }
     });
 
-    // ESC键关闭
+    // ESC key to close
     const escHandler = (e) => {
       if (e.key === 'Escape') {
         modal.remove();
@@ -1363,10 +1758,19 @@ class LumaDataScraper {
         dataCount: this.totalVisitors ? this.totalVisitors.length : 0
       });
     } else if (request.action === 'startScraping') {
-      console.log('⚠️ 接收到旧的startScraping消息，已忽略');
+      console.log('⚠️ Received old startScraping message, ignored');
       sendResponse({ success: true });
     } else if (request.action === 'stopScraping') {
-      console.log('⚠️ 接收到旧的stopScraping消息，已忽略');
+      console.log('⚠️ Received old stopScraping message, ignored');
+      sendResponse({ success: true });
+    } else if (request.action === 'resetPermission') {
+      this.handleResetPermission();
+      sendResponse({ success: true });
+    } else if (request.action === 'cookieConsentGranted') {
+      this.handleCookieConsentGranted();
+      sendResponse({ success: true });
+    } else if (request.action === 'changeLanguage') {
+      this.handleLanguageChange(request.language);
       sendResponse({ success: true });
     } else if (request.action === 'checkStatus') {
       const eventsContainer = document.querySelector('#luma-events-list');
@@ -1379,6 +1783,233 @@ class LumaDataScraper {
         initComplete: this.initComplete || false
       });
     }
+  }
+
+  // Handle permission reset from popup
+  handleResetPermission() {
+    console.log('🔄 Received permission reset request');
+
+    // Reset Cookie consent status
+    this.cookieConsent = false;
+    this.authCookie = null;
+    this.authValue = null;
+    this.cookieHeader = null;
+
+    // Hide existing UI
+    const existingContainer = document.querySelector('#luma-events-list');
+    if (existingContainer) {
+      existingContainer.style.display = 'none';
+    }
+
+    // Reset initialization status
+    this.initComplete = false;
+
+    console.log('✅ Permission reset, need re-authorization');
+  }
+
+  // Handle cookie consent granted from popup
+  async handleCookieConsentGranted() {
+    console.log('✅ Received popup Cookie consent message');
+
+    this.cookieConsent = true;
+
+    // Continue initialization
+    await this.continueInit();
+  }
+
+  // Handle language change from popup
+  handleLanguageChange(language) {
+    console.log('🌐 Received language switch request:', language);
+    
+    // Update language setting in localStorage
+    localStorage.setItem('luma-scraper-lang', language);
+    
+    // Update language of existing UI
+    this.updateUILanguage();
+  }
+
+  // Update UI language
+  updateUILanguage() {
+    const container = document.getElementById('luma-scraper-events-container');
+    if (container) {
+      // Update main title
+      const title = container.querySelector('h3');
+      if (title) {
+        title.textContent = `🎯 ${ContentLanguageManager.getText('title')}`;
+      }
+
+      // Update status text
+      const statusDiv = container.querySelector('.luma-status');
+      if (statusDiv) {
+        if (this.allEvents) {
+          // Normal event list status
+          const scrapableCount = this.allEvents.filter(e => e.canScrape).length;
+          const totalCount = this.allEvents.length;
+          statusDiv.textContent = `✅ ${ContentLanguageManager.getText('status.authenticated')} | ${ContentLanguageManager.getText('status.found')} ${scrapableCount}/${totalCount} ${ContentLanguageManager.getText('status.scrappable')}`;
+        } else {
+          // Fallback UI status
+          statusDiv.textContent = `✅ ${ContentLanguageManager.getText('status.authenticated')} | ${ContentLanguageManager.getText('messages.failed')} to get event list`;
+        }
+      }
+
+      // Update Cookie status text
+      const cookieStatus = container.querySelector('.luma-cookie-status');
+      if (cookieStatus) {
+        cookieStatus.textContent = `🍪 ${ContentLanguageManager.getText('status.cookieAuthorized')}`;
+      }
+
+      // Update 'no scrappable events' text
+      const noEventsDiv = container.querySelector('.no-events');
+      if (noEventsDiv) {
+        noEventsDiv.textContent = ContentLanguageManager.getText('messages.noScrapableEvents');
+      }
+
+      // Update buttons and text in event list
+      this.updateEventItemsLanguage();
+      
+      // Update static text in event details
+      this.updateEventDetailsLanguage();
+      
+      // Update error messages in fallback UI
+      this.updateFallbackUILanguage();
+    }
+  }
+
+  // Update fallback UI language
+  updateFallbackUILanguage() {
+    const container = document.getElementById('luma-scraper-events-container');
+    if (container) {
+      // Update fallback error title
+      const errorTitle = container.querySelector('h4');
+      if (errorTitle && errorTitle.textContent.includes('get event list')) {
+        errorTitle.textContent = `${ContentLanguageManager.getText('messages.failed')} to get event list`;
+      }
+
+      // Update error details paragraph
+      const errorParagraph = container.querySelector('.luma-events-list p');
+      if (errorParagraph) {
+        errorParagraph.innerHTML = `
+          ${ContentLanguageManager.getText('messages.possibleReasons')}
+          <br>• ${ContentLanguageManager.getText('messages.networkIssue')}
+          <br>• ${ContentLanguageManager.getText('messages.apiUnavailable')}
+          <br>• ${ContentLanguageManager.getText('messages.authAbnormal')}
+          <br><br>
+          ${ContentLanguageManager.getText('messages.refreshPage')}
+        `;
+      }
+    }
+  }
+
+  // Update event details language
+  updateEventDetailsLanguage() {
+    const eventItems = document.querySelectorAll('.luma-event-item');
+    
+    eventItems.forEach((item, index) => {
+      if (!this.allEvents || !this.allEvents[index]) return;
+      const event = this.allEvents[index];
+
+      // Update event access status text - using more robust DOM selection
+      const accessElement = item.querySelector('.event-access-text');
+      if (accessElement) {
+        // Force refresh the access status with current language
+        const accessStatus = event.canScrape
+          ? `✅ ${ContentLanguageManager.getText('events.guestListVisible')} | 🔑 ${ContentLanguageManager.getText('events.hasAccess')}`
+          : event.show_guest_list
+            ? `✅ ${ContentLanguageManager.getText('events.guestListVisible')} | ❌ ${ContentLanguageManager.getText('events.noAccess')}`
+            : `❌ ${ContentLanguageManager.getText('events.guestListHidden')}`;
+        
+        accessElement.innerHTML = accessStatus;
+      } else {
+        // If .event-access-text element is missing, try to find and update the entire info section
+        const infoElement = item.querySelector('.luma-event-info');
+        if (infoElement) {
+          // Reconstruct the access status line
+          const existingLines = infoElement.innerHTML.split('<br>');
+          if (existingLines.length >= 3) {
+            const accessStatus = event.canScrape
+              ? `✅ ${ContentLanguageManager.getText('events.guestListVisible')} | 🔑 ${ContentLanguageManager.getText('events.hasAccess')}`
+              : event.show_guest_list
+                ? `✅ ${ContentLanguageManager.getText('events.guestListVisible')} | ❌ ${ContentLanguageManager.getText('events.noAccess')}`
+                : `❌ ${ContentLanguageManager.getText('events.guestListHidden')}`;
+            
+            // Update the third line (access status line) with proper wrapper
+            existingLines[2] = `🎫 ${event.visibility} | <span class="event-access-text">${accessStatus}</span>`;
+            infoElement.innerHTML = existingLines.join('<br>');
+          }
+        }
+      }
+
+      // Update progress text
+      const progressText = item.querySelector('.progress-text');
+      if (progressText) {
+        const currentText = progressText.textContent;
+        // Only update if it's in a ready/idle state (not actively showing progress)
+        const chineseFailed = ContentLanguageManager.getText('messages.failed');
+        const chineseCompleted = ContentLanguageManager.getText('messages.completed');
+        const chinesePage = ContentLanguageManager.getText('messages.page');
+        
+        if (!currentText.includes('...') && 
+            !currentText.includes(chineseFailed) && 
+            !currentText.includes('failed') && 
+            !currentText.includes(chineseCompleted) && 
+            !currentText.includes('completed') &&
+            !currentText.includes('%') &&
+            !currentText.includes('Page') &&
+            !currentText.includes(chinesePage)) {
+          progressText.textContent = ContentLanguageManager.getText('messages.ready');
+        }
+      }
+    });
+  }
+
+  // Update event items language
+  updateEventItemsLanguage() {
+    const eventItems = document.querySelectorAll('.luma-event-item');
+    eventItems.forEach((item, index) => {
+      if (!this.allEvents || !this.allEvents[index]) return;
+
+      // Update button text
+      const autoBtn = item.querySelector('.scrape-auto-btn');
+      const manualBtn = item.querySelector('.scrape-manual-btn');
+      const stopBtn = item.querySelector('.stop-btn');
+      const nextBtn = item.querySelector('.next-page-btn');
+      const exportBtn = item.querySelector('.export-btn');
+      const resetBtn = item.querySelector('.reset-btn');
+      const viewBtn = item.querySelector('.view-btn');
+
+      if (autoBtn && !autoBtn.disabled) {
+        autoBtn.textContent = ContentLanguageManager.getText('buttons.autoScrape');
+      }
+      if (manualBtn && !manualBtn.disabled) {
+        manualBtn.textContent = ContentLanguageManager.getText('buttons.manualScrape');
+      }
+      if (stopBtn) {
+        stopBtn.textContent = ContentLanguageManager.getText('buttons.stop');
+      }
+      if (nextBtn && !nextBtn.disabled) {
+        nextBtn.textContent = ContentLanguageManager.getText('buttons.nextPage');
+      }
+      if (exportBtn) {
+        const match = exportBtn.textContent.match(/\((\d+)/);
+        const count = match ? match[1] : '';
+        exportBtn.textContent = count ? 
+          `${ContentLanguageManager.getText('buttons.export')} (${count}${ContentLanguageManager.getText('messages.items')})` :
+          ContentLanguageManager.getText('buttons.export');
+      }
+      if (resetBtn) {
+        resetBtn.textContent = ContentLanguageManager.getText('buttons.reset');
+      }
+      if (viewBtn) {
+        viewBtn.textContent = ContentLanguageManager.getText('buttons.viewDetails');
+      }
+      
+      // Update unable to scrape button text
+      const disabledBtn = item.querySelector('.luma-btn-disabled');
+      if (disabledBtn) {
+        // Always update to current language, regardless of current text
+        disabledBtn.textContent = ContentLanguageManager.getText('events.noAccess');
+      }
+    });
   }
 }
 

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Luma Data Scraper",
+  "name": "EventMate",
   "version": "1.0.0",
-  "description": "自动读取Luma网站cookies并实现翻页数据抓取功能",
+  "description": "Automatically read Luma website cookies and implement pagination data scraping functionality",
   "permissions": [
     "cookies",
     "activeTab",
@@ -31,7 +31,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Luma Data Scraper"
+    "default_title": "EventMate"
   },
   "web_accessible_resources": [
     {
